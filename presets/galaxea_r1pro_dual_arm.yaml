@@ -1,0 +1,41 @@
+description: "Galaxea R1Pro dual-arm recommended cleaning parameters (state/action dim 16)."
+
+recommended_rules:
+  video_integrity:
+    enabled: true
+
+  timestamp_alignment:
+    enabled: true
+    expected_fps_tolerance_ratio: 0.2
+    video_frame_tolerance: 2
+    require_uniform_dt: true
+    on_mismatch: warn_only
+
+  numeric_sanity:
+    enabled: true
+    on_nan: drop_episode
+    on_inf: drop_episode
+    outlier_mode: warn
+    outlier_low_quantile: 0.01
+    outlier_high_quantile: 0.99
+
+  gripper_binarize:
+    enabled: true
+    threshold: 0.5
+    mode: binary_01
+    targets:
+      - state.left_gripper
+      - state.right_gripper
+      - action.left_gripper
+      - action.right_gripper
+
+  static_frame_trim:
+    enabled: true
+    mode: trim_edges
+    source: action
+    pos_threshold: 2.0e-3
+    rot_threshold_deg: 2.0
+
+  episode_length_filter:
+    enabled: true
+    min_frames: 30

@@ -1,0 +1,68 @@
+# Example cleaning_config.yaml for lerobot-cleaner.
+# Place this in your dataset directory (as cleaning_config.yaml) for auto-discovery,
+# or pass it explicitly: lerobot-cleaner run ./my_dataset --config ./this.yaml
+
+input: ./datasets/r1pro_cocktail_v2
+output: ./datasets/r1pro_cocktail_v2_clean
+preset: galaxea_r1pro_dual_arm   # optional: import recommended defaults
+dry_run: false
+num_workers: 8
+resume: false
+
+rules:
+  video_integrity:
+    enabled: true
+
+  timestamp_alignment:
+    enabled: true
+    expected_fps_tolerance_ratio: 0.2
+    video_frame_tolerance: 2
+    require_uniform_dt: true
+    on_mismatch: warn_only      # warn_only | strict_drop
+
+  numeric_sanity:
+    enabled: true
+    on_nan: drop_episode        # drop_episode | drop_frame | interpolate | clip | warn
+    on_inf: drop_episode
+    outlier_mode: warn          # off | warn | clip_quantile | drop_frame
+    outlier_low_quantile: 0.01
+    outlier_high_quantile: 0.99
+    # joint_limits:
+    #   state.left_arm: [-3.14, 3.14]
+
+  gripper_binarize:
+    enabled: true
+    threshold: 0.5
+    mode: binary_01             # binary_01 | binary_neg1_pos1
+    targets:
+      - state.left_gripper
+      - state.right_gripper
+      - action.left_gripper
+      - action.right_gripper
+
+  static_frame_trim:
+    enabled: true
+    mode: trim_edges            # trim_edges (safe) | drop_static_frames (distorts dt)
+    source: action              # action | state
+    pos_threshold: 2.0e-3
+    rot_threshold_deg: 2.0
+
+  video_roi_crop:
+    enabled: false
+    rois:
+      observation.images.ego_view:
+        x_ratio: 0.1
+        y_ratio: 0.1
+        w_ratio: 0.8
+        h_ratio: 0.8
+    resize_after_crop: [640, 360]
+
+  episode_length_filter:
+    enabled: true
+    min_frames: 30
+    max_frames: null
+
+  reindex_and_restats:
+    enabled: true               # always on; not user-disableable
+    verify_alignment: true
+    compute_relative_stats: true

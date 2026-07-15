@@ -1,0 +1,192 @@
+"""Cleaning pipeline orchestration.
+
+Flow:
+  1. (optional) outlier pre-pass: sample source state/action to get q01/q99 bounds
+  2. parallel per-episode: run rules -> stage cleaned parquet + re-encoded videos
+  3. sequential finalize: assign new indices, rebuild index cols + uniform ts,
+     move videos into final layout, accumulate exact streaming stats
+  4. verify alignment (video frames == rows == episodes.jsonl length)
+  5. write all meta (R8)
+  6. emit report
+"""
+
+from __future__ import annotations
+
+import shutil
+import tempfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
+
+import numpy as np
+from tqdm import tqdm
+
+from lerobot_cleaner.config import CleaningConfig, OutlierMode
+from lerobot_cleaner.dataset.inspector import inspect_dataset
+from lerobot_cleaner.dataset.reader import ACTION_COL, STATE_COL, LeRobotDataset
+from lerobot_cleaner.dataset.validate import validate_dataset
+from lerobot_cleaner.dataset.writer import DatasetWriter
+from lerobot_cleaner.parallel import EpisodeResult, process_episode
+from lerobot_cleaner.report import CleaningReport
+from lerobot_cleaner.rules import build_rules
+
+
+class Pipeline:
+    def __init__(self, config: CleaningConfig):
+        if config.input is None or config.output is None:
+            raise ValueError("config.input and config.output must be set")
+        self.config = config
+        self.input = Path(config.input)
+        self.output = Path(config.output)
+        if self.input.resolve() == self.output.resolve():
+            raise ValueError("output must differ from input (never mutate source)")
+        # Preflight: fail fast with one clear error if the input does not meet
+        # the GR00T-format LeRobot v2.1 contract. Warnings are surfaced via run().
+        self.input_warnings = validate_dataset(self.input)
+        self.source = LeRobotDataset(self.input)
+
+    # --- outlier pre-pass ---------------------------------------------------
+    def _compute_outlier_bounds(self, refs) -> dict:
+        nsc = self.config.rules.numeric_sanity
+        if nsc.outlier_mode in (OutlierMode.off, OutlierMode.warn) and not nsc.enabled:
+            return {}
+        if nsc.outlier_mode == OutlierMode.off:
+            return {}
+        # Sample up to ~200k rows total across episodes for quantile bounds.
+        max_rows = 200_000
+        per_ep = max(1, max_rows // max(1, len(refs)))
+        state_chunks, action_chunks = [], []
+        for ref in refs:
+            try:
+                df = ref.load_parquet()
+            except Exception:
+                continue
+            if STATE_COL in df.columns and len(df):
+                arr = np.stack(df[STATE_COL].to_numpy()).astype(np.float64)
+                state_chunks.append(arr[:: max(1, len(arr) // per_ep + 1)])
+            if ACTION_COL in df.columns and len(df):
+                arr = np.stack(df[ACTION_COL].to_numpy()).astype(np.float64)
+                action_chunks.append(arr[:: max(1, len(arr) // per_ep + 1)])
+        bounds = {}
+        if state_chunks:
+            s = np.concatenate(state_chunks)
+            bounds["state"] = (
+                np.quantile(s, nsc.outlier_low_quantile, axis=0),
+                np.quantile(s, nsc.outlier_high_quantile, axis=0),
+            )
+        if action_chunks:
+            a = np.concatenate(action_chunks)
+            bounds["action"] = (
+                np.quantile(a, nsc.outlier_low_quantile, axis=0),
+                np.quantile(a, nsc.outlier_high_quantile, axis=0),
+            )
+        return bounds
+
+    # --- main run -----------------------------------------------------------
+    def run(self) -> CleaningReport:
+        summary_before = inspect_dataset(self.source)
+        refs = self.source.episodes()
+
+        outlier_bounds = {}
+        if self.config.rules.numeric_sanity.enabled:
+            outlier_bounds = self._compute_outlier_bounds(refs)
+
+        rules = build_rules(self.config, self.source, outlier_bounds=outlier_bounds)
+
+        report = CleaningReport(
+            config=self.config,
+            summary_before=summary_before,
+            rule_names=[r.name for r in rules],
+        )
+
+        if self.config.dry_run:
+            return self._dry_run(refs, rules, report)
+
+        self.output.mkdir(parents=True, exist_ok=True)
+        writer = DatasetWriter(self.source, self.output, codec="libx264")
+
+        already_done = writer.existing_output_episodes() if self.config.resume else set()
+
+        staging_root = Path(tempfile.mkdtemp(prefix="lerobot_clean_", dir=self.output))
+        codec = "libx264"
+        fps = self.source.fps
+        video_keys = self.source.resolver.video_keys()
+
+        results: list[EpisodeResult] = []
+        try:
+            todo = [r for r in refs if r.episode_index not in already_done]
+            with ProcessPoolExecutor(max_workers=self.config.num_workers) as ex:
+                futures = {
+                    ex.submit(
+                        process_episode, ref, rules, staging_root, codec, fps, video_keys
+                    ): ref
+                    for ref in todo
+                }
+                for fut in tqdm(as_completed(futures), total=len(futures), desc="cleaning"):
+                    results.append(fut.result())
+
+            # Deterministic order: by source index.
+            results.sort(key=lambda r: r.src_index)
+
+            new_index = 0
+            for res in results:
+                report.record_episode(res)
+                if res.dropped:
+                    continue
+                writer.finalize_staged_episode(
+                    new_index, res.staged_parquet, res.staged_videos, res.tasks
+                )
+                if self.config.rules.reindex_and_restats.verify_alignment:
+                    err = writer.verify_episode_alignment(new_index, res.length)
+                    if err:
+                        report.add_alignment_error(err)
+                new_index += 1
+
+            writer.finalize_meta()
+        finally:
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+        report.summary_after = inspect_dataset(LeRobotDataset(self.output))
+        report.merge_rule_stats(results)
+        self._write_used_config()
+        report.write(self.output / "cleaning_report")
+        return report
+
+    # --- dry run ------------------------------------------------------------
+    def _dry_run(self, refs, rules, report: CleaningReport) -> CleaningReport:
+        from collections import Counter
+
+        from lerobot_cleaner.parallel import EpisodeResult
+        from lerobot_cleaner.types import EpisodeWork
+
+        results = []
+        for ref in tqdm(refs, desc="dry-run"):
+            df = ref.load_parquet()
+            work = EpisodeWork(ref=ref, df=df, keep_indices=list(range(len(df))))
+            res_stats = {}
+            for rule in rules:
+                rule.stats = Counter()
+                rule.apply(work)
+                res_stats[rule.name] = Counter(rule.stats)
+                if work.dropped:
+                    break
+            res = EpisodeResult(
+                src_index=ref.episode_index,
+                dropped=work.dropped,
+                drop_reason=work.drop_reason,
+                length=len(work.df),
+                tasks=ref.tasks,
+                staged_parquet=None,
+                staged_videos={},
+                notes=work.notes,
+                rule_stats=res_stats,
+            )
+            report.record_episode(res)
+            results.append(res)
+        report.merge_rule_stats(results)
+        report.write(self.output / "cleaning_report", dry_run=True)
+        return report
+
+    def _write_used_config(self) -> None:
+        out = self.output / "cleaning_report"
+        out.mkdir(parents=True, exist_ok=True)
+        self.config.to_yaml(out / "cleaning_config.used.yaml")

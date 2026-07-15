@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_cleaner"
+version = "0.1.0"
+description = "A configurable, modular cleaning tool for GR00T-format LeRobot datasets"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [{ name = "cyd" }]
+keywords = ["lerobot", "gr00t", "robotics", "vla", "dataset", "cleaning"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "pydantic>=2.5",
+    "typer>=0.9",
+    "rich>=13.0",
+    "questionary>=2.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.7"]
+video = ["opencv-python>=4.8"]
+dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.4"]
+all = [
+    "matplotlib>=3.7",
+    "opencv-python>=4.8",
+    "pytest>=7.4",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+lerobot_cleaner = "lerobot_cleaner.cli:app"
+lerobot-cleaner = "lerobot_cleaner.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/cyd/lerobot_cleaner"
+Repository = "https://github.com/cyd/lerobot_cleaner"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lerobot_cleaner*"]
+
+[tool.setuptools.package-data]
+lerobot_cleaner = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
