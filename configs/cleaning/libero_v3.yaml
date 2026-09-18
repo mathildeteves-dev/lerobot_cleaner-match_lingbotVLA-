@@ -1,0 +1,16 @@
+# LIBERO-fastwam / lerobot_v30: preserve the original action representation.
+engine: streaming
+data_file_policy: strict
+nonfinite: error
+bounds: {}
+verify_videos: true
+max_frames: 30000000
+batch_rows: 8192
+metadata_batch_rows: 64
+max_episode_frames: 100000
+# Covers every row of this 104280-frame subset; quantiles are exact here.
+quantile_samples: 131072
+disk_reserve_gb: 5
+progress: true
+# Tolerant alias validation lives in --profile; preserve slight float differences.
+aliases: []

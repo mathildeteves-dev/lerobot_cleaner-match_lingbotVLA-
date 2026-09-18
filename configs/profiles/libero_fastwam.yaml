@@ -1,0 +1,40 @@
+name: libero_fastwam_v3
+features:
+  observation.state: 8
+  observation.states.ee_state: 6
+  observation.states.joint_state: 7
+  observation.states.gripper_state: 2
+  action: 7
+cameras: [observation.images.image, observation.images.wrist_image]
+state_feature: observation.state
+action_feature: action
+aliases:
+  - {source: observation.state, target: observation.states.ee_state, start: 0, end: 6}
+  - {source: observation.state, target: observation.states.gripper_state, start: 6, end: 8}
+alias_atol: 0.000001
+alias_rtol: 0.000001
+quality:
+  motion_action_dims: [0, 1, 2, 3, 4, 5]
+  static_epsilon: 0.0001
+  static_seconds: 3
+  action_jump: 0.5
+  jitter_step: 0.1
+  jitter_fraction: 0.25
+  min_seconds: 2
+  max_seconds: 120
+  visual:
+    enabled: true
+    sample_seconds: 1
+    black_level: 3
+    low_detail_variance: 4
+    unchanged_pixel_tolerance: 0.05
+    unchanged_seconds: 3
+    preview_limit: 20
+# Native-unit heuristic thresholds, not verified controller limits.
+semantics:
+  verified: false
+  evidence: ''
+  action_mode: unknown
+  rotation_representation: unknown
+  units: unknown
+  gripper_convention: unknown

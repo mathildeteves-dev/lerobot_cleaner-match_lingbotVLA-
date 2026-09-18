@@ -1,0 +1,19 @@
+# Explicit opt-in for the diagnosed server dataset with stale, unreferenced shards.
+# Does NOT delete originals, change total_frames, or bypass index/video checks.
+engine: streaming
+data_file_policy: metadata_referenced
+nonfinite: error
+bounds: {}
+verify_videos: false
+max_frames: 30000000
+batch_rows: 8192
+metadata_batch_rows: 64
+max_episode_frames: 100000
+quantile_samples: 32768
+disk_reserve_gb: 5
+progress: true
+aliases:
+  - {source: observation.state, target: observation.state.joint_position, start: 0, end: 7}
+  - {source: observation.state, target: observation.state.gripper_position, start: 7, end: 8}
+  - {source: action, target: action.joint_position, start: 0, end: 7}
+  - {source: action, target: action.gripper_position, start: 7, end: 8}

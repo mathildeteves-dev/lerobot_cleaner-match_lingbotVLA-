@@ -29,3 +29,8 @@ Thumbs.db
 
 # Wandb (if accidentally created)
 wandb/
+
+# Local datasets, generated reports and model artifacts (do not publish raw data)
+outputs/
+assets/norm_stats/
+.verification-deps/
