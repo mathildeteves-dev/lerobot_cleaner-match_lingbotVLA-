@@ -8,6 +8,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from lerobot_cleaner.core.quality import (
+    check_acceleration,
+    check_finite,
+    check_jerk,
+    check_velocity,
+)
+from lerobot_cleaner.v30.adapter import V30Adapter
 from lerobot_cleaner.v30.review_profile import load_profile
 from lerobot_cleaner.v30.v3 import matrix, numeric_keys
 
@@ -90,6 +97,14 @@ class DatasetReview:
             "flags": [],
             "nonfinite": nonfinite,
             "task": self.texts[task],
+        }
+        trajectory = V30Adapter.to_trajectory(
+            frame, self.info["fps"], self.profile.state_feature, self.profile.action_feature
+        )
+        row["trajectory_checks"] = {
+            result.rule: result.to_dict()
+            for result in (check_finite(trajectory), check_velocity(trajectory),
+                           check_acceleration(trajectory), check_jerk(trajectory))
         }
         if nonfinite:
             row["flags"].append("nonfinite")

@@ -228,6 +228,29 @@ def clean_v3_command(
     console.print(f"Report: {output / 'cleaning_report/report.md'}")
 
 
+@app.command("smoke-lingbot")
+def smoke_lingbot_command(
+    dataset: Path = typer.Argument(..., exists=True, file_okay=False),
+    output: Path = typer.Option(..., "--output"),
+    lingbot_root: Path = typer.Option(..., "--lingbot-root", exists=True),
+    profile: Path = typer.Option(..., "--profile", exists=True),
+    robot_config: Path = typer.Option(..., "--robot-config", exists=True),
+    train_config: Path = typer.Option(..., "--train-config", exists=True),
+    config: Optional[Path] = typer.Option(None, "--config", exists=True),
+    cuda_device: str = typer.Option("0", "--cuda-device"),
+):
+    """Real LingBot data-pipeline smoke; run from the repository in its Linux environment."""
+    from scripts.smoke_lingbot import smoke
+    try:
+        result = smoke(dataset, output, lingbot_root, profile, robot_config, train_config, config, cuda_device)
+    except (OSError, ValueError, ImportError) as exc:
+        console.print(f"Smoke failed: {exc}", markup=False)
+        raise typer.Exit(code=1) from exc
+    console.print_json(json.dumps(result))
+    if result["status"] != "passed":
+        raise typer.Exit(code=2)
+
+
 @app.command("validate-lingbot")
 def validate_lingbot_command(
     dataset: Path = typer.Argument(..., exists=True, file_okay=False),

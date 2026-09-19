@@ -19,7 +19,7 @@ from lerobot_cleaner.v30.review_profile import load_profile
 from lerobot_cleaner.v30.training_readiness import check_readiness
 
 
-def probe(dataset, lingbot_root, profile, robot_config, train_config, norm_stats=None):
+def probe(dataset, lingbot_root, profile, robot_config, train_config, norm_stats=None, smoke_batch=False):
     result = check_readiness(profile, lingbot_root)
     if not result["source_available"] or result["missing_dependencies"]:
         return result
@@ -81,6 +81,34 @@ def probe(dataset, lingbot_root, profile, robot_config, train_config, norm_stats
                 },
             }
         )
+    batch_shapes = None
+    if smoke_batch:
+        if not norm_stats:
+            raise ValueError("Smoke batch requires validated normalization statistics")
+        # Audit every getdata request made by __getitem__; retries/substitutions fail smoke.
+        requested = []
+        original_getdata = ds.getdata
+
+        def traced_getdata(index):
+            requested.append(int(index))
+            return original_getdata(index)
+
+        ds.getdata = traced_getdata
+        ds[0]
+        if requested != [0]:
+            raise ValueError(f"dataset[0] retried or substituted indices: {requested}")
+        requested.clear()
+        size = min(2, len(ds))
+        batch = next(iter(torch.utils.data.DataLoader(ds, batch_size=size, shuffle=False, num_workers=0)))
+        if requested != list(range(size)):
+            raise ValueError(f"DataLoader retried or substituted indices: {requested}")
+        for key, width in mapping["mapped_dimensions"].items():
+            values = batch[key]
+            expected = (size, chunk_size, width) if key.startswith("action.") else (size, width)
+            if tuple(values.shape) != expected or not torch.isfinite(values).all():
+                raise ValueError(f"Invalid DataLoader tensor {key}: {values.shape}")
+        batch_shapes = {key: list(value.shape) for key, value in batch.items() if hasattr(value, "shape")}
+
     blockers = []
     if not profile.semantics.verified:
         blockers.append("实际字段加载已通过，但控制语义尚未按数据来源核实。")
@@ -93,6 +121,9 @@ def probe(dataset, lingbot_root, profile, robot_config, train_config, norm_stats
         **result,
         "status": "blocked",
         "data_loader_validated": True,
+        "getitem_validated": smoke_batch,
+        "dataloader_batch_validated": smoke_batch,
+        "batch_shapes": batch_shapes,
         "normalization_sample_validated": bool(norm_stats),
         "runtime_validated": False,
         "blockers": blockers,
@@ -108,6 +139,7 @@ def main():
     parser.add_argument("--robot-config", type=Path)
     parser.add_argument("--train-config", type=Path)
     parser.add_argument("--norm-stats", type=Path)
+    parser.add_argument("--smoke-batch", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
@@ -127,6 +159,7 @@ def main():
                 args.robot_config,
                 args.train_config,
                 args.norm_stats,
+                smoke_batch=args.smoke_batch,
             )
     except Exception as exc:
         result = {"status": "failed", "runtime_validated": False, "error": str(exc)}

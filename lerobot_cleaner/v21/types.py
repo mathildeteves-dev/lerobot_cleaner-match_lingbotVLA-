@@ -2,49 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Optional
 
 import pandas as pd
 
+from lerobot_cleaner.core.trajectory import CheckResult, _json_safe
 from lerobot_cleaner.v21.reader import EpisodeRef
-
-
-def _json_safe(value):
-    import math
-    from numbers import Integral, Real
-
-    def convert(value):
-        if value is None or isinstance(value, (str, bool)):
-            return value
-        if isinstance(value, Integral):
-            return int(value)
-        if isinstance(value, Real):
-            return float(value) if math.isfinite(value) else None
-        if isinstance(value, dict):
-            return {str(k): convert(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [convert(v) for v in value]
-        if hasattr(value, "tolist"):
-            return convert(value.tolist())
-        raise TypeError(f"Unsupported check metric type: {type(value).__name__}")
-
-    return convert(value)
-
-
-@dataclass
-class CheckResult:
-    """An observed quality result, independent of the episode acceptance policy."""
-
-    passed: bool
-    rule: str
-    severity: str
-    metrics: dict = field(default_factory=dict)
-    message: str | None = None
-
-    def to_dict(self) -> dict:
-        """Return strict JSON-compatible data; unavailable/non-finite numbers are null."""
-        return _json_safe(asdict(self))
 
 
 @dataclass

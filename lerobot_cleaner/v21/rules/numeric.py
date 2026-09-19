@@ -2,6 +2,10 @@
 from lerobot_cleaner.v21.config import OnBad, OutlierMode
 from lerobot_cleaner.v21.rules.base import CheckRule, TransformRule
 from lerobot_cleaner.v21.rules.checks.trajectory.acceleration import AccelerationRule
+from lerobot_cleaner.v21.rules.checks.trajectory.derivative_zscore import (
+    AccelerationZScoreRule,
+    VelocityZScoreRule,
+)
 from lerobot_cleaner.v21.rules.checks.trajectory.finite import FiniteRule
 from lerobot_cleaner.v21.rules.checks.trajectory.jerk import JerkRule
 from lerobot_cleaner.v21.rules.checks.trajectory.joint_limits import JointLimitsRule
@@ -15,7 +19,7 @@ def numeric_checks(config, dataset, bounds=None) -> list[CheckRule]:
     checks = [FiniteRule(config, dataset)]
     if config.joint_limits:
         checks.append(JointLimitsRule(config, dataset))
-    for cls in (VelocityRule, AccelerationRule, JerkRule):
+    for cls in (VelocityRule, AccelerationRule, JerkRule, VelocityZScoreRule, AccelerationZScoreRule):
         cfg = getattr(config, cls.name)
         if cfg.enabled:
             checks.append(cls(cfg, dataset))

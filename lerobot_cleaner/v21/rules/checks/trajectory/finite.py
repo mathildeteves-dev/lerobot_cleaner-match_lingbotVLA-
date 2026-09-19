@@ -1,10 +1,10 @@
 """Detect NaN/Inf without modifying rows or values."""
-import numpy as np
-
+from lerobot_cleaner.core.quality import check_finite
+from lerobot_cleaner.v21.adapter import V21Adapter
 from lerobot_cleaner.v21.config import OnBad
 from lerobot_cleaner.v21.rules.base import CheckRule
 
-from ._common import COLUMNS, stack
+from ._common import COLUMNS
 
 
 class FiniteRule(CheckRule):
@@ -13,15 +13,10 @@ class FiniteRule(CheckRule):
     def check(self, work, context=None):
         metrics = {}
         problems = []
-        for col, _ in COLUMNS:
-            arr = stack(work, col)
-            if arr is None:
-                continue
-            for label, mask, action in (
-                ("nan", np.isnan(arr).any(axis=1), self.config.on_nan),
-                ("inf", np.isinf(arr).any(axis=1), self.config.on_inf),
-            ):
-                n = int(mask.sum())
+        measured = check_finite(V21Adapter.to_trajectory(work, self.fps))
+        for col, modality in COLUMNS:
+            for label, action in (("nan", self.config.on_nan), ("inf", self.config.on_inf)):
+                n = measured.metrics[modality][f"{label}_frames"]
                 metrics.setdefault(col, {})[f"{label}_frames"] = n
                 if not n:
                     continue

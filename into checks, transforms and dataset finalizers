@@ -1,0 +1,119 @@
+ .gitignore                                         |   5 [32m+[m
+ ...an-sess_8926b11b-2eae-4df3-81bc-9495ae7cef91.md |  42 [32m+[m
+ PROJECT_STATUS.md                                  |  94 [32m++[m[31m-[m
+ README.md                                          | 173 [32m+++[m[31m-[m
+ configs/README.md                                  |  45 [32m++[m
+ configs/cleaning/droid_v3.yaml                     |  19 [32m+[m
+ configs/cleaning/droid_v3_referenced.yaml          |  19 [32m+[m
+ configs/cleaning/libero_v3.yaml                    |  16 [32m+[m
+ configs/embodiments/droid_franka.yaml              |  34 [32m+[m
+ configs/embodiments/r1pro.yaml                     |  34 [32m+[m
+ configs/profiles/libero_fastwam.yaml               |  40 [32m+[m
+ configs/robot_configs/droid_franka.yaml            |  26 [32m+[m
+ configs/robot_configs/r1pro.yaml                   |  44 [32m++[m
+ configs/vla/droid_franka.yaml                      |  43 [32m+[m
+ configs/vla/r1pro_load20000h.yaml                  |  54 [32m++[m
+ docs/DROID100_SERVER_PLAN_2026-09-12_ZH.md         | 109 [32m+++[m
+ docs/DROID_GUIDE_ZH.md                             | 201 [32m+++++[m
+ docs/LIBERO_V3.md                                  | 105 [32m+++[m
+ docs/PROJECT_REVIEW_2026-09-06_ZH.md               | 329 [32m++++++++[m
+ docs/STALE_SHARDS_ZH.md                            |  98 [32m+++[m
+ docs/STREAMING_SERVER_ZH.md                        | 183 [32m+++++[m
+ git push -u origin HEAD                            | 118 [32m+++[m
+ lerobot_cleaner/__init__.py                        |   6 [32m+[m[31m-[m
+ lerobot_cleaner/cli.py                             | 163 [32m+++[m[31m-[m
+ lerobot_cleaner/rules/__init__.py                  |  46 [31m--[m
+ lerobot_cleaner/rules/base.py                      |  42 [31m-[m
+ lerobot_cleaner/rules/r6_numeric.py                | 160 [31m----[m
+ lerobot_cleaner/{dataset => v21}/__init__.py       |   0
+ lerobot_cleaner/{ => v21}/config.py                |  20 [32m+[m[31m-[m
+ lerobot_cleaner/{dataset => v21}/inspector.py      |   2 [32m+[m[31m-[m
+ lerobot_cleaner/{ => v21}/parallel.py              |  28 [32m+[m[31m-[m
+ lerobot_cleaner/{ => v21}/pipeline.py              |  95 [32m+[m[31m--[m
+ lerobot_cleaner/{dataset => v21}/reader.py         |   0
+ lerobot_cleaner/{ => v21}/report.py                |  36 [32m+[m[31m-[m
+ lerobot_cleaner/v21/rules/__init__.py              |  74 [32m++[m
+ lerobot_cleaner/v21/rules/base.py                  | 105 [32m+++[m
+ lerobot_cleaner/v21/rules/checks/__init__.py       |   1 [32m+[m
+ .../v21/rules/checks/integrity/__init__.py         |   1 [32m+[m
+ .../rules/checks/integrity/episode_length.py}      |  14 [32m+[m[31m-[m
+ .../v21/rules/checks/integrity/numeric.py          |  25 [32m+[m
+ .../rules/checks/integrity/timestamp.py}           |  19 [32m+[m[31m-[m
+ .../v21/rules/checks/trajectory/__init__.py        |   1 [32m+[m
+ .../v21/rules/checks/trajectory/_common.py         |  36 [32m+[m
+ .../v21/rules/checks/trajectory/_derivative.py     |  81 [32m++[m
+ .../v21/rules/checks/trajectory/acceleration.py    |   7 [32m+[m
+ .../v21/rules/checks/trajectory/finite.py          |  36 [32m+[m
+ .../v21/rules/checks/trajectory/jerk.py            |   7 [32m+[m
+ .../v21/rules/checks/trajectory/joint_limits.py    |  37 [32m+[m
+ .../v21/rules/checks/trajectory/outlier.py         |  36 [32m+[m
+ .../v21/rules/checks/trajectory/velocity.py        |   7 [32m+[m
+ .../v21/rules/checks/vision/__init__.py            |   1 [32m+[m
+ .../rules/checks/vision/video_integrity.py}        |  18 [32m+[m[31m-[m
+ lerobot_cleaner/v21/rules/finalizers/__init__.py   |  13 [32m+[m
+ lerobot_cleaner/v21/rules/finalizers/base.py       |  14 [32m+[m
+ .../v21/rules/finalizers/lerobot_metadata.py       |  17 [32m+[m
+ .../v21/rules/finalizers/lingbot_norm_stats.py     |  25 [32m+[m
+ lerobot_cleaner/v21/rules/finalizers/reindex.py    |  19 [32m+[m
+ .../v21/rules/finalizers/reindex_and_restats.py    |  18 [32m+[m
+ lerobot_cleaner/v21/rules/finalizers/stats.py      |  10 [32m+[m
+ lerobot_cleaner/v21/rules/numeric.py               |  36 [32m+[m
+ lerobot_cleaner/v21/rules/transforms/__init__.py   |   1 [32m+[m
+ .../v21/rules/transforms/embodiment/__init__.py    |   1 [32m+[m
+ .../rules/transforms/embodiment/gripper.py}        |  24 [32m+[m[31m-[m
+ .../v21/rules/transforms/motion/__init__.py        |   1 [32m+[m
+ .../rules/transforms/motion/static_trim.py}        |  40 [32m+[m[31m-[m
+ .../v21/rules/transforms/numeric/__init__.py       |   1 [32m+[m
+ .../rules/transforms/numeric/percentile_clip.py    |  39 [32m+[m
+ .../v21/rules/transforms/numeric/repair.py         |  85 [32m++[m
+ .../v21/rules/transforms/vision/__init__.py        |   1 [32m+[m
+ .../rules/transforms/vision/roi_crop.py}           |  16 [32m+[m[31m-[m
+ lerobot_cleaner/{dataset => v21}/stats.py          |   0
+ lerobot_cleaner/{ => v21}/types.py                 |  57 [32m+[m[31m-[m
+ lerobot_cleaner/{dataset => v21}/validate.py       |   2 [32m+[m[31m-[m
+ lerobot_cleaner/{ => v21}/video_utils.py           |   0
+ lerobot_cleaner/{ => v21}/wizard.py                |   6 [32m+[m[31m-[m
+ lerobot_cleaner/{dataset => v21}/writer.py         | 114 [32m++[m[31m-[m
+ lerobot_cleaner/v30/__init__.py                    |   0
+ lerobot_cleaner/v30/episode_review.py              | 173 [32m++++[m
+ lerobot_cleaner/v30/libero.py                      |  13 [32m+[m
+ lerobot_cleaner/v30/lingbot/__init__.py            |  13 [32m+[m
+ lerobot_cleaner/v30/lingbot/config.py              | 104 [32m+++[m
+ lerobot_cleaner/v30/lingbot/generate.py            | 337 [32m++++++++[m
+ lerobot_cleaner/v30/lingbot/vla.py                 | 119 [32m+++[m
+ lerobot_cleaner/v30/review_profile.py              | 106 [32m+++[m
+ lerobot_cleaner/v30/review_report.py               | 205 [32m+++++[m
+ lerobot_cleaner/v30/training_readiness.py          |  39 [32m+[m
+ lerobot_cleaner/v30/v3.py                          | 431 [32m++++++++++[m
+ lerobot_cleaner/v30/v3_stream_stats.py             |  82 [32m++[m
+ lerobot_cleaner/v30/v3_streaming.py                | 873 [32m+++++++++++++++++++++[m
+ lerobot_cleaner/v30/video_review.py                |  90 [32m+++[m
+ pyproject.toml                                     |  10 [32m+[m[31m-[m
+ scripts/package_streaming_update.py                |  53 [32m++[m
+ scripts/run_compute_norm_r1pro.sh                  |   8 [32m+[m
+ scripts/run_droid_clean.py                         |  77 [32m++[m
+ scripts/run_libero_clean.py                        | 180 [32m+++++[m
+ scripts/run_lingbot_norm.py                        | 193 [32m+++++[m
+ scripts/run_lingbot_probe.py                       | 140 [32m++++[m
+ tests/conftest.py                                  |  87 [32m++[m
+ tests/v21/test_check_results.py                    |  87 [32m++[m
+ tests/{ => v21}/test_config.py                     |   2 [32m+[m[31m-[m
+ tests/{ => v21}/test_e2e.py                        |   6 [32m+[m[31m-[m
+ tests/v21/test_finalizers.py                       |  98 [32m+++[m
+ tests/v21/test_numeric_stages.py                   | 163 [32m++++[m
+ tests/v21/test_review_regressions.py               |  71 [32m++[m
+ tests/v21/test_rule_base.py                        | 101 [32m+++[m
+ tests/{ => v21}/test_rules.py                      |  12 [32m+[m[31m-[m
+ tests/v21/test_stages.py                           | 148 [32m++++[m
+ tests/{ => v21}/test_stats.py                      |   2 [32m+[m[31m-[m
+ tests/v21/test_transform_results.py                | 113 [32m+++[m
+ tests/{ => v21}/test_validate.py                   |   2 [32m+[m[31m-[m
+ tests/v30/test_libero.py                           | 119 [32m+++[m
+ tests/v30/test_lingbot_configs.py                  |  83 [32m++[m
+ tests/v30/test_lingbot_generate.py                 | 240 [32m++++++[m
+ tests/v30/test_lingbot_norm.py                     | 214 [32m+++++[m
+ tests/v30/test_lingbot_vla.py                      | 185 [32m+++++[m
+ tests/v30/test_review_workflow.py                  | 273 [32m+++++++[m
+ tests/v30/test_v3.py                               | 217 [32m+++++[m
+ tests/v30/test_v3_streaming.py                     | 471 [32m+++++++++++[m
+ 118 files changed, 8985 insertions(+), 430 deletions(-)

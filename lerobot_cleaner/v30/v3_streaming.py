@@ -437,6 +437,7 @@ def scan(dataset, config, stage=None, observer=None):
         else {}
     )
     changes, videos = {}, {}
+    trajectory_quality = []
     offset = episodes = failed = peak_episode = 0
     files_by_path = {path: (lo, hi) for path, lo, hi, _ in files}
     with ExitStack() as stack:
@@ -468,6 +469,9 @@ def scan(dataset, config, stage=None, observer=None):
             frame = raw.to_pandas()
             validate_episode(root, info, files_by_path, row, episodes, offset, frame)
             add_videos(root, info, row, videos)
+            if stage is None and config.quality.enabled:
+                from lerobot_cleaner.v30.quality import audit_trajectory
+                trajectory_quality.append(audit_trajectory(frame, info["fps"], config.quality))
             if observer is not None:
                 observer.process(row, frame)
             if "is_episode_successful" in frame:
@@ -516,6 +520,7 @@ def scan(dataset, config, stage=None, observer=None):
         "engine": "streaming",
         "peak_input_batch_rows": reader.peak_rows,
         "peak_episode_rows": peak_episode,
+        "trajectory_quality": trajectory_quality,
         "warning": "Numeric and metadata checks do not verify video pixels, control semantics or task quality.",
     }
     if observer is not None:

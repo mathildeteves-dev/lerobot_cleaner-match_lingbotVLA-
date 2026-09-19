@@ -161,3 +161,12 @@ def test_interpolation_and_inf_clipping_are_transforms_only():
     NumericSanityRule(cfg, dataset()).apply(w)
     np.testing.assert_equal(np.stack(w.df["observation.state"])[:, 0], [0, 1, 2, 0])
     assert w.keep_indices == [0, 1, 2, 3]
+
+
+def test_interpolation_only_changes_bad_components():
+    cfg = NumericSanityConfig(on_nan="interpolate", on_inf="interpolate", outlier_mode="off")
+    w = work([[0, 10], [np.nan, 99], [2, np.inf], [3, 40]])
+    rule = NumericSanityRule(cfg, dataset())
+    rule.apply(w)
+    np.testing.assert_equal(np.stack(w.df["observation.state"]), [[0, 10], [1, 99], [2, 69.5], [3, 40]])
+    assert w.keep_indices == [0, 1, 2, 3]

@@ -42,12 +42,16 @@ class NumericRepairRule(TransformRule):
                     work.df[col] = list(arr)
                     self.stats[f"{label}_frames_clipped"] += n
                 elif policy == OnBad.interpolate:
-                    # Interpolate affected rows using only finite support values.
-                    arr[bad] = np.nan
+                    # Component-wise: preserve every healthy value, even in a bad row.
+                    component_mask = detector(arr)
                     x = np.arange(len(arr))
                     for j in range(arr.shape[1]):
+                        missing = component_mask[:, j]
+                        if not missing.any():
+                            continue
                         good = np.isfinite(arr[:, j])
-                        arr[bad, j] = np.interp(x[bad], x[good], arr[good, j]) if good.any() else 0.0
+                        arr[missing, j] = np.interp(x[missing], x[good], arr[good, j]) if good.any() else 0.0
+                    self.stats[f"{label}_components_interpolated"] += int(component_mask.sum())
                     work.df[col] = list(arr)
                     self.stats[f"{label}_frames_interpolated"] += n
             for dotted, (low, high) in self.config.joint_limits.items():

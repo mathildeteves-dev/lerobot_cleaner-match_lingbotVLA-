@@ -328,3 +328,31 @@ invalid values suitable for training statistics. Video metadata dimensions are r
 from the first finalized video in each view after crop/resize. Video workflows require
 both ffmpeg and ffprobe on PATH. LingBot normalization remains a configured adapter hook,
 not a default operation of this v2.1 pipeline.
+
+
+### Shared trajectory quality core
+
+`lerobot_cleaner.core.TrajectoryView(state, action, timestamps, fps)` is an owned,
+read-only NumPy snapshot with aligned frame counts. `core/quality` depends only on
+NumPy and standard Python: it does not import version packages, pandas, parquet
+readers, or modality resolvers. It provides `check_finite`, `check_velocity`,
+`check_acceleration`, `check_jerk`, `check_joint_limits`, and `check_zscore`, returning
+the shared `CheckResult`. The old v2.1 CheckResult import remains compatible.
+
+`V21Adapter.to_trajectory(work, fps)` maps EpisodeWork to arrays; modality key resolution
+stays in that adapter. `V30Adapter.to_trajectory(frame, fps, state_column, action_column)`
+accepts one ordered episode slice already loaded by the v3 reader, including custom
+feature mappings. Explicit timestamps are preserved; fallback times use original
+frame indices where available. Core checks never repair data or reject episodes:
+version-layer policy decides whether a failed result causes rejection.
+
+v2.1 finite, joint-limit, velocity, acceleration, and jerk rules now call the core.
+v3 episode review adds the same finite and derivative measurements under
+`trajectory_checks`; without thresholds, derivatives report measurements with
+`threshold_applied: false` and do not introduce rejection decisions. Derivative thresholds
+are native units/second**order; angles are not unwrapped. `check_zscore` computes
+per-dimension population z-scores within an episode (constant dimensions score zero).
+It is a standalone opt-in check, not a replacement for existing dataset-percentile
+outlier checks or clipping. Thresholds and feature selection must reflect the robot.
+
+See [trajectory quality and real LingBot smoke](docs/TRAJECTORY_QUALITY_AND_SMOKE_ZH.md) for read-only audit configuration, derivative Z-scores, component-wise repairs, and the required runtime integration test.

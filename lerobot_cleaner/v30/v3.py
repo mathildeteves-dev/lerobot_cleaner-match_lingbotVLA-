@@ -19,6 +19,8 @@ import pandas as pd
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from lerobot_cleaner.v30.quality import TrajectoryQualityConfig, audit_trajectory
+
 
 class Alias(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -30,6 +32,7 @@ class Alias(BaseModel):
 
 class V3Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    quality: TrajectoryQualityConfig = Field(default_factory=TrajectoryQualityConfig)
     nonfinite: Literal["error", "interpolate"] = "error"
     # Bounds apply only when explicitly requested. No inferred joint limits.
     bounds: dict[str, tuple[float, float]] = Field(default_factory=dict)
@@ -241,6 +244,8 @@ def audit_v3(dataset: Path, config: V3Config | None = None) -> dict:
         "fps": info["fps"],
         "tasks": info["total_tasks"],
         "numeric": describe(data, info),
+        "trajectory_quality": [audit_trajectory(frame, info["fps"], config.quality)
+                               for _, frame in data.groupby("episode_index", sort=True)] if config.quality.enabled else [],
         "videos": videos,
         "video_verification": "full_decode" if config.verify_videos else "metadata_only",
         "unsuccessful_episodes": int(

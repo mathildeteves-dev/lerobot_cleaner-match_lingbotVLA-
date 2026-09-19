@@ -147,6 +147,8 @@ class DerivativeCheckConfig(RuleConfig):
 
 
 class NumericSanityConfig(RuleConfig):
+    velocity_zscore: DerivativeCheckConfig = Field(default_factory=DerivativeCheckConfig)
+    acceleration_zscore: DerivativeCheckConfig = Field(default_factory=DerivativeCheckConfig)
     velocity: DerivativeCheckConfig = Field(default_factory=DerivativeCheckConfig)
     acceleration: DerivativeCheckConfig = Field(default_factory=DerivativeCheckConfig)
     jerk: DerivativeCheckConfig = Field(default_factory=DerivativeCheckConfig)
