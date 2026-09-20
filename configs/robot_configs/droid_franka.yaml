@@ -12,6 +12,9 @@ actions:
   - action.arm.position:
       origin_keys:
         - action: {start: 0, end: 7}
+      # Current DROID: absolute qpose; LingBot real-world recipe recommends relative qpose.
+      # Deployment semantics have not yet been converted/verified.
+      # Keep absolute positions. If switching to deltas, update deployment and recompute norm.
       subtract_state: false
   - action.effector.position:
       origin_keys:

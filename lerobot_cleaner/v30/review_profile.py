@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from lerobot_cleaner.v30.quality import JointStaticConfig, QualityGroup, TrajectoryQualityConfig
 from lerobot_cleaner.v30.v3 import Alias
 
 
@@ -23,6 +24,8 @@ class VisualOptions(StrictModel):
 
 
 class QualityOptions(StrictModel):
+    joint_static_ratio: JointStaticConfig | None = None
+    groups: list[QualityGroup] | None = Field(None, min_length=1)
     motion_action_dims: list[int] | None = None
     static_epsilon: float = Field(default=0.0001, ge=0)
     static_seconds: float = Field(default=3, gt=0)
@@ -35,6 +38,7 @@ class QualityOptions(StrictModel):
 
     @model_validator(mode="after")
     def check_lengths(self):
+        TrajectoryQualityConfig(groups=self.groups)
         if self.min_seconds >= self.max_seconds:
             raise ValueError("min_seconds must be less than max_seconds")
         return self

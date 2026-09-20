@@ -128,6 +128,13 @@ v3 规定文件如何存储；机器人映射规定“8 个数字分别喂给模
 的容量供 LingBot 填充，剩余部分是占位，不代表数据里还有另一只机械臂。
 
 `subtract_state: false` 明确选择保留原数据的位置动作，不转成相对当前状态的差值。
+
+当前 DROID integration 的机械臂动作表示是 **absolute qpose**。
+LingBot 官方 FAQ 对 real-world post-training 推荐的 recipe 是 **relative qpose**。
+当前有意偏离该推荐：部署端的动作语义尚未转换并验证，因此保留 `action.arm.position.subtract_state: false`。
+这不是已完整复现 LingBot 推荐 action representation 的声明；数据加载或 smoke 通过也不代表该语义已对齐。
+如切换到 relative qpose，必须同步转换并验证部署端动作解释，然后重新计算 LingBot normalization statistics。
+
 夹爪（effector.position）和末端位置（end.position）不允许启用 subtract_state，静态校验会拒绝。
 只有支持差分的关节位置可以按需要启用相对动作。
 

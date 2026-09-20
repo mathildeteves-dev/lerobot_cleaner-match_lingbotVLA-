@@ -8,13 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from lerobot_cleaner.core.quality import (
-    check_acceleration,
-    check_finite,
-    check_jerk,
-    check_velocity,
-)
-from lerobot_cleaner.v30.adapter import V30Adapter
+from lerobot_cleaner.v30.quality import TrajectoryQualityConfig, audit_trajectory
 from lerobot_cleaner.v30.review_profile import load_profile
 from lerobot_cleaner.v30.v3 import matrix, numeric_keys
 
@@ -98,14 +92,14 @@ class DatasetReview:
             "nonfinite": nonfinite,
             "task": self.texts[task],
         }
-        trajectory = V30Adapter.to_trajectory(
-            frame, self.info["fps"], self.profile.state_feature, self.profile.action_feature
-        )
-        row["trajectory_checks"] = {
-            result.rule: result.to_dict()
-            for result in (check_finite(trajectory), check_velocity(trajectory),
-                           check_acceleration(trajectory), check_jerk(trajectory))
-        }
+        trajectory_quality = audit_trajectory(frame, self.info["fps"], TrajectoryQualityConfig(
+            state_column=self.profile.state_feature, action_column=self.profile.action_feature,
+            groups=self.profile.quality.groups,
+            joint_static_ratio=self.profile.quality.joint_static_ratio,
+        ))
+        row["trajectory_checks"] = trajectory_quality["checks"]
+        if "groups" in trajectory_quality:
+            row["trajectory_groups"] = trajectory_quality["groups"]
         if nonfinite:
             row["flags"].append("nonfinite")
         else:

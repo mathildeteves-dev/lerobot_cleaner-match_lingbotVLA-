@@ -238,11 +238,12 @@ def smoke_lingbot_command(
     train_config: Path = typer.Option(..., "--train-config", exists=True),
     config: Optional[Path] = typer.Option(None, "--config", exists=True),
     cuda_device: str = typer.Option("0", "--cuda-device"),
+    level: int = typer.Option(1, "--level", min=1, max=3, help="1: loader; 2: training batch; 3: one model forward"),
 ):
     """Real LingBot data-pipeline smoke; run from the repository in its Linux environment."""
     from scripts.smoke_lingbot import smoke
     try:
-        result = smoke(dataset, output, lingbot_root, profile, robot_config, train_config, config, cuda_device)
+        result = smoke(dataset, output, lingbot_root, profile, robot_config, train_config, config, cuda_device, level=level)
     except (OSError, ValueError, ImportError) as exc:
         console.print(f"Smoke failed: {exc}", markup=False)
         raise typer.Exit(code=1) from exc

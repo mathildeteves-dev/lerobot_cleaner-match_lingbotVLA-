@@ -14,6 +14,49 @@ aliases:
 alias_atol: 0.000001
 alias_rtol: 0.000001
 quality:
+  # Joint stillness: both full state and action transitions must be below epsilon.
+  # Native-unit heuristic tolerances; tune each independently for the dataset.
+  joint_static_ratio:
+    state_epsilon: 0.0001
+    action_epsilon: 0.0001
+    threshold: 0.95
+  groups:
+    - name: state_arm
+      source: state
+      columns: [0, 1, 2, 3, 4, 5]
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: action_arm
+      source: action
+      columns: [0, 1, 2, 3, 4, 5]
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: state_gripper
+      source: state
+      columns: [6, 7]
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: action_gripper
+      source: action
+      columns: [6]
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
   motion_action_dims: [0, 1, 2, 3, 4, 5]
   static_epsilon: 0.0001
   static_seconds: 3

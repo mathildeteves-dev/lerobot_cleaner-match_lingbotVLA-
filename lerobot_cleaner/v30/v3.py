@@ -295,6 +295,10 @@ def clean_v3(
     if config.verify_videos:
         verify_video_files(root, info, videos)
     before = describe(data, info)
+    quality_input = [
+        audit_trajectory(frame, info["fps"], config.quality)
+        for _, frame in data.groupby("episode_index", sort=True)
+    ] if config.quality.enabled else []
     changes = {}
     keys = numeric_keys(info)
     alias_targets = {a.target for a in config.aliases}
@@ -376,6 +380,7 @@ def clean_v3(
         "changed_values": changes,
         "rows_removed": 0,
         "video_verification": "full_decode" if config.verify_videos else "metadata_only",
+        "trajectory_quality_input": quality_input,
         "numeric_before": before,
         "numeric_after": describe(data, info),
         "policy": "Preserve every row, task, timestamp, video offset and extra feature; no success filtering.",
@@ -418,7 +423,11 @@ def clean_v3(
             if digest(dest) != source_hash:
                 raise RuntimeError("Copied video checksum mismatch")
             report["video_sha256"][relative] = source_hash
-        load_v3(stage, config.max_frames)
+        _, output_info, output_data, _, _, _, _ = load_v3(stage, config.max_frames)
+        report["trajectory_quality_output"] = [
+            audit_trajectory(frame, output_info["fps"], config.quality)
+            for _, frame in output_data.groupby("episode_index", sort=True)
+        ] if config.quality.enabled else []
         report_dir = stage / "cleaning_report"
         report_dir.mkdir()
         (report_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

@@ -356,3 +356,7 @@ It is a standalone opt-in check, not a replacement for existing dataset-percenti
 outlier checks or clipping. Thresholds and feature selection must reflect the robot.
 
 See [trajectory quality and real LingBot smoke](docs/TRAJECTORY_QUALITY_AND_SMOKE_ZH.md) for read-only audit configuration, derivative Z-scores, component-wise repairs, and the required runtime integration test.
+
+Trajectory quality supports explicit `quality.groups` with separate source, columns and thresholds per arm/gripper group. Shipped DROID and LIBERO audit configs (and the LIBERO review profile) use their own feature layouts; results appear under `trajectory_quality[].groups` or review `trajectory_groups`. Legacy single-source configs remain supported.
+
+`smoke-lingbot --level 1` checks the loader (default); `--level 2` adds real LingBot normalization, image/language preprocessing and a training-shaped batch; explicit `--level 3` adds one no-grad model forward. No backward, optimizer or FSDP is run. See the smoke guide above for local asset requirements and scope.

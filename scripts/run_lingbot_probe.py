@@ -19,14 +19,18 @@ from lerobot_cleaner.v30.review_profile import load_profile
 from lerobot_cleaner.v30.training_readiness import check_readiness
 
 
-def probe(dataset, lingbot_root, profile, robot_config, train_config, norm_stats=None, smoke_batch=False):
+def probe(dataset, lingbot_root, profile, robot_config, train_config, norm_stats=None, smoke_batch=False, smoke_level=1):
+    if smoke_level not in (1, 2, 3):
+        raise ValueError("smoke_level must be 1, 2 or 3")
+    if smoke_level >= 2 and (not smoke_batch or not norm_stats):
+        raise ValueError("Level 2/3 requires --smoke-batch and validated normalization")
     result = check_readiness(profile, lingbot_root)
     if not result["source_available"] or result["missing_dependencies"]:
         return result
     mapping = validate_mapping(dataset, robot_config, train_config)
     train = yaml.safe_load(train_config.read_text(encoding="utf-8"))
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
     sys.path.insert(0, str(lingbot_root.resolve()))
     import torch
     from lingbotvla.data.vla_data.base_dataset import VLADataset
@@ -109,17 +113,30 @@ def probe(dataset, lingbot_root, profile, robot_config, train_config, norm_stats
                 raise ValueError(f"Invalid DataLoader tensor {key}: {values.shape}")
         batch_shapes = {key: list(value.shape) for key, value in batch.items() if hasattr(value, "shape")}
 
+    training_result = {}
+    if smoke_level >= 2:
+        from scripts.lingbot_training_batch import training_batch
+        try:
+            training_result = training_batch(dataset, robot_config, train, norm_stats, mapping, level=smoke_level)
+        except Exception as exc:
+            training_result = {"error": str(exc), "failed_stage": "training preprocessing",
+                               "training_batch_validated": False, "model_forward_validated": False}
+
     blockers = []
     if not profile.semantics.verified:
         blockers.append("实际字段加载已通过，但控制语义尚未按数据来源核实。")
     if not norm_stats:
         blockers.append("未提供经过全数据验证的 LingBot 归一化统计。")
-    blockers.append(
-        "尚未验证模型分词、图像处理及训练前向；本命令仅验证实际数据加载、字段映射、可选归一化与批次拼接。"
-    )
+    completed_level = (3 if training_result.get("model_forward_validated") else
+                       2 if training_result.get("training_batch_validated") else 1)
+    blockers.append({
+        1: "仅验证数据加载；尚未验证训练预处理与模型前向。",
+        2: "训练预处理已验证；尚未验证模型前向。",
+        3: "单次前向已验证；未验证反向传播、优化器或分布式训练。",
+    }[completed_level])
     return {
         **result,
-        "status": "blocked",
+        "status": "failed" if "error" in training_result else "blocked",
         "data_loader_validated": True,
         "getitem_validated": smoke_batch,
         "dataloader_batch_validated": smoke_batch,
@@ -128,6 +145,8 @@ def probe(dataset, lingbot_root, profile, robot_config, train_config, norm_stats
         "runtime_validated": False,
         "blockers": blockers,
         "samples": sampled,
+        "smoke_level": smoke_level,
+        **training_result,
     }
 
 
@@ -140,6 +159,7 @@ def main():
     parser.add_argument("--train-config", type=Path)
     parser.add_argument("--norm-stats", type=Path)
     parser.add_argument("--smoke-batch", action="store_true")
+    parser.add_argument("--smoke-level", type=int, choices=[1, 2, 3], default=1)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
@@ -160,13 +180,15 @@ def main():
                 args.train_config,
                 args.norm_stats,
                 smoke_batch=args.smoke_batch,
+                smoke_level=args.smoke_level,
             )
     except Exception as exc:
         result = {"status": "failed", "runtime_validated": False, "error": str(exc)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result.get("data_loader_validated") else 2
+    flag = {1: "data_loader_validated", 2: "training_batch_validated", 3: "model_forward_validated"}[args.smoke_level]
+    return 0 if result.get(flag) is True and result.get("status") != "failed" else 2
 
 
 if __name__ == "__main__":

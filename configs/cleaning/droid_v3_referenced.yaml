@@ -17,3 +17,50 @@ aliases:
   - {source: observation.state, target: observation.state.gripper_position, start: 7, end: 8}
   - {source: action, target: action.joint_position, start: 0, end: 7}
   - {source: action, target: action.gripper_position, start: 7, end: 8}
+
+# Separate arm/gripper signals; null absolute thresholds measure only.
+# Z-score and static epsilon are tunable heuristics, not verified physical limits.
+quality:
+  # Joint stillness: both full state and action transitions must be below epsilon.
+  # Native-unit heuristic tolerances; tune each independently for the dataset.
+  joint_static_ratio:
+    state_epsilon: 0.0001
+    action_epsilon: 0.0001
+    threshold: 0.95
+  groups:
+    - name: state_arm
+      source: state
+      columns: [0, 1, 2, 3, 4, 5, 6]
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: action_arm
+      source: action
+      columns: [0, 1, 2, 3, 4, 5, 6]
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: state_gripper
+      source: state
+      columns: [7]
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: action_gripper
+      source: action
+      columns: [7]
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001

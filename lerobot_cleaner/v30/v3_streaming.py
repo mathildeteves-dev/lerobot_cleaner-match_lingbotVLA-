@@ -469,7 +469,7 @@ def scan(dataset, config, stage=None, observer=None):
             frame = raw.to_pandas()
             validate_episode(root, info, files_by_path, row, episodes, offset, frame)
             add_videos(root, info, row, videos)
-            if stage is None and config.quality.enabled:
+            if config.quality.enabled:
                 from lerobot_cleaner.v30.quality import audit_trajectory
                 trajectory_quality.append(audit_trajectory(frame, info["fps"], config.quality))
             if observer is not None:
@@ -520,7 +520,7 @@ def scan(dataset, config, stage=None, observer=None):
         "engine": "streaming",
         "peak_input_batch_rows": reader.peak_rows,
         "peak_episode_rows": peak_episode,
-        "trajectory_quality": trajectory_quality,
+        "trajectory_quality_input" if stage is not None else "trajectory_quality": trajectory_quality,
         "warning": "Numeric and metadata checks do not verify video pixels, control semantics or task quality.",
     }
     if observer is not None:
@@ -775,6 +775,16 @@ def clean_streaming(
             if fingerprint(root) != identity["source_fingerprint"]:
                 raise ValueError("Source changed during scan; do not modify input while cleaning")
             write_json(checkpoint, {"report": report, "checksums": checksums})
+        # Older checkpoints skipped input quality during cleaning. Re-audit raw data;
+        # never substitute output quality or trust the old empty placeholder.
+        if "trajectory_quality_input" not in report:
+            report["trajectory_quality_input"] = (
+                scan(root, config)["trajectory_quality"] if config.quality.enabled else []
+            )
+            report.pop("trajectory_quality", None)
+            if fingerprint(root) != identity["source_fingerprint"]:
+                raise ValueError("Source changed during input quality audit")
+            write_json(checkpoint, {"report": report, "checksums": saved["checksums"]})
         copy_checkpoint = partial / "videos.json"
         hashes = (
             json.loads(copy_checkpoint.read_text(encoding="utf-8"))
@@ -828,6 +838,7 @@ def clean_streaming(
             "rows_removed": 0,
             "numeric_before": report["numeric"],
             "numeric_after": after["numeric"],
+            "trajectory_quality_output": after["trajectory_quality"],
             "videos": after["videos"],
             "video_sha256": hashes,
             "video_verification": after["video_verification"],
