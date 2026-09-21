@@ -176,3 +176,77 @@ streaming 断点保存输入质量；恢复旧版缺少输入质量的断点时�
 `tests/v30/test_smoke_lingbot.py` 是真实环境门禁；除了已有的路径环境变量，可用
 `LINGBOT_SMOKE_LEVEL=2` 选择训练 batch，显式设为 3 才运行 forward（默认 1）。
 本次实现仅读取本地 LingBot 源码并运行单元测试，未实际执行任何级别的真实 smoke。
+
+## 两遍执行：Calibration → thresholds.yaml → Cleaning
+
+先做只读校准（默认不会启动 cleaning）：
+
+```bash
+lerobot-cleaner calibrate-v3 /data/source \
+  --config configs/cleaning/droid_v3.yaml \
+  --output /data/droid-calibration
+```
+
+一次命令自动完成两遍：
+
+```bash
+lerobot-cleaner calibrate-v3 /data/source \
+  --config configs/cleaning/droid_v3.yaml \
+  --output /data/droid-calibration \
+  --clean-output /data/droid-clean
+```
+
+也可先审查校准报告，再单独执行：
+
+```bash
+lerobot-cleaner clean-v3 /data/source \
+  --config /data/droid-calibration/thresholds.yaml \
+  --output /data/droid-clean
+```
+
+两个输出目录必须不存在、位于源数据集之外，且彼此不嵌套。首次 calibration 不修复数值、不删 episode、不改原文件；
+即使原配置包含 interpolate 或 bounds，第一遍仍只走 audit。memory/streaming 使用同一个估计器。
+必须显式配置并启用 quality.groups；不会猜测机器人维度，也不会把 state/action 或 arm/gripper 混成同一个总体。
+DROID 的四组名称及列号沿用随附配置；LIBERO 用自己的布局。
+
+### 统计口径与默认公式
+
+对每个 group，分别估计 velocity、acceleration、jerk、velocity_zscore、acceleration_zscore。
+每个 episode 提供一个该组的峰值样本：前三项为 max(abs(derivative))，后两项为已有检查中的 max_zscore。
+导数沿用真实时间戳（秒）；Z-score 仍是在 episode 内、按分量计算。
+对选中数据集全部 episode 的这些峰值精确计算，不做 reservoir 抽样，episode 等权：
+
+```text
+Tq   = quantile(episode_peaks, 0.995, method="linear")
+m    = median(episode_peaks)
+MAD  = median(abs(episode_peaks - m))
+Tmad = m + 8 × 1.4826 × MAD
+T    = max(Tq, Tmad)
+```
+
+因此 Q99.5% 指 **episode 峰值分布**，不是将所有 transition、所有关节混在一起后的 99.5% 分位数。
+长 episode 不因帧数多而获得更高统计权重。当前阈值是数据驱动的质量告警阈值，不是验证过的机械臂物理安全限值。
+`max` 选择更宽松的一侧，符合偏保守告警策略，但不会保证剔除所有异常或证明数据无异常。
+
+可调参数：`--quantile 0.995`、`--mad-k 8`、`--min-samples 20`。
+每组每项至少需要 min-samples 个有效 episode。低于一条期望上尾样本时（默认分位数约需 200 条）会提醒尾部分位数估计不稳。
+MAD=0 时仍计算 quantile；若最终值为 0，则显式应用 1e-12 的数值下限以满足现有阈值必须大于 0 的接口，并在报告标记 floor_applied。
+这一下限不是自动估计出的物理限值。Python API 的 CalibrationConfig 可调整 positive_floor 和 mad_scale。
+
+短轨迹、非有限值、无效导数和无效 Z-score 不混入统计，每组每项记录排除数量和原因。
+已有阈值判为失败但指标可计算的 episode **仍参与校准**，避免按旧阈值筛选造成偏差。
+任一组/指标样本不足或统计溢出，保存报告、退出码非零，不生成 thresholds.yaml，不进入 cleaning。
+
+### 产物与兼容性
+
+- `calibration_report.json`：统计口径、参数、source/columns、有效与排除数量、median、MAD、Tq、Tmad、最终阈值、警告和后续 cleaning 状态。
+- `audit.json`：第一遍只读检查的逐 episode/group 原始指标，可追溯阈值来源。
+- `thresholds.yaml`：校准成功才生成；是完整可加载的 V3Config，保留原 aliases、bounds、engine 等设置，仅替换五类 quality 阈值。
+
+YAML 继续使用现有 **groups 列表 + 标量阈值** 接口，例如 `groups[].velocity`，不是另起 `groups.state_arm.velocity.threshold` 字典接口。
+static_epsilon、static_ratio、joint_static_ratio 及原始数值 bounds 都不会被此校准重新估计。
+第一遍读取的源文件身份（info 内容以及文件路径/大小/mtime）会在扫描结束和自动 cleaning 开始前核对；这不是全文件内容哈希，期间仍须保持源数据不可变。
+streaming 的帧数据读取有批量边界；精确统计保留逐 episode 指标，内存会随 episode 数量增长，不宣称常量内存。
+
+v3 Cleaning Pass 继续保留全部行：生成阈值作用于 `trajectory_quality_input/output`，不自动删除 episode、不把速度/jerk 阈值当作原始动作值的 clipping bounds。
+若以后需要按质量拒绝 episode，需要另外明确接受策略；当前不会隐式更改此前的 row-preserving 约定。

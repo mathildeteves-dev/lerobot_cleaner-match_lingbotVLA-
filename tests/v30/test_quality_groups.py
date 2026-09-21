@@ -101,9 +101,24 @@ def test_group_audit_matches_across_engines_and_preserves_files(v3_data):
 def test_shipped_configs_have_robot_specific_groups():
     root = Path(__file__).resolve().parents[2]
     droid = V3Config.from_yaml(root / "configs/cleaning/droid_v3.yaml")
-    assert droid.quality.groups[3].columns == [7]
+    expected_droid = [
+        ("state_arm", "state", list(range(7))),
+        ("action_arm", "action", list(range(7))),
+        ("state_gripper", "state", [7]),
+        ("action_gripper", "action", [7]),
+    ]
+    for config in (droid, V3Config.from_yaml(root / "configs/cleaning/droid_v3_referenced.yaml")):
+        assert config.quality.enabled is True
+        assert [(g.name, g.source, g.columns) for g in config.quality.groups] == expected_droid
+        assert config.quality.joint_static_ratio is not None
     libero = V3Config.from_yaml(root / "configs/cleaning/libero_v3.yaml")
-    assert libero.quality.groups[2].columns == [6, 7]
-    assert libero.quality.groups[3].columns == [6]
+    assert libero.quality.enabled is True
+    assert [(g.name, g.source, g.columns) for g in libero.quality.groups] == [
+        ("state_arm", "state", list(range(6))),
+        ("action_arm", "action", list(range(6))),
+        ("state_gripper", "state", [6, 7]),
+        ("action_gripper", "action", [6]),
+    ]
+    assert libero.quality.joint_static_ratio is not None
     profile = load_profile(root / "configs/profiles/libero_fastwam.yaml")
     assert profile.quality.groups == libero.quality.groups

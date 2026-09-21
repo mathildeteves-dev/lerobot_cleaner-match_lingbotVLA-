@@ -18,6 +18,7 @@ aliases: []
 # Separate arm/gripper signals; null absolute thresholds measure only.
 # Z-score and static epsilon are tunable heuristics, not verified physical limits.
 quality:
+  enabled: true
   # Joint stillness: both full state and action transitions must be below epsilon.
   # Native-unit heuristic tolerances; tune each independently for the dataset.
   joint_static_ratio:

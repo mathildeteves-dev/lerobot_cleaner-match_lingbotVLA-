@@ -203,6 +203,36 @@ def audit_v3_command(
         raise typer.Exit(code=1) from e
 
 
+@app.command("calibrate-v3")
+def calibrate_v3_command(
+    dataset: Path = typer.Argument(..., exists=True, file_okay=False),
+    output: Path = typer.Option(..., "--output", "-o"),
+    config: Path = typer.Option(..., "--config", "-c", exists=True, dir_okay=False),
+    quantile: float = typer.Option(0.995, "--quantile"),
+    mad_k: float = typer.Option(8.0, "--mad-k"),
+    min_samples: int = typer.Option(20, "--min-samples", min=2),
+    clean_output: Optional[Path] = typer.Option(None, "--clean-output"),
+):
+    """Read-only group calibration; optionally clean using the generated thresholds."""
+    from lerobot_cleaner.v30.calibration import CalibrationConfig, calibrate_v3
+    from lerobot_cleaner.v30.v3 import V3Config
+
+    try:
+        settings = CalibrationConfig(quantile=quantile, mad_k=mad_k, min_samples=min_samples)
+        report = calibrate_v3(dataset, output, V3Config.from_yaml(config), settings,
+                              clean_output=clean_output)
+    except (OSError, ValueError, KeyError, ImportError, RuntimeError) as exc:
+        console.print(f"Calibration failed: {exc}", markup=False)
+        raise typer.Exit(code=1) from exc
+    console.print(f"Calibration: {report['status']}; report: {output / 'calibration_report.json'}")
+    if report["threshold_config"]:
+        console.print(f"Threshold config: {report['threshold_config']}")
+    if clean_output is not None:
+        console.print(f"Cleaning: {report['cleaning']['status']}")
+    if report["status"] != "ready":
+        raise typer.Exit(code=2)
+
+
 @app.command("clean-v3")
 def clean_v3_command(
     dataset: Path = typer.Argument(..., exists=True, file_okay=False),
