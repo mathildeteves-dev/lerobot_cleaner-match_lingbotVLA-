@@ -7,11 +7,16 @@
 
 `audit-v3` / `clean-v3` 通过 `--config` 传入的清洗配置（`V3Config` schema）。
 
+新版检查、policy、TransformPlan 和变换配置见 [规则说明](../docs/V3_RULES_AND_TRANSFORMS_ZH.md)。
+
 | 文件 | 用途 |
 | --- | --- |
+| `v3_quality_policy.example.yaml` | 新版质量规则、判断策略和显式变换的完整示例 |
 | `droid_v3.yaml` | DROID 数据默认清洗配置：分批 streaming 引擎、保守策略（不删帧、非有限值报错） |
-| `droid_v3_referenced.yaml` | 在默认基础上启用 `data_file_policy: metadata_referenced`，处理"数据文件多于元数据引用"的重复分片场景，见 [docs/STALE_SHARDS_ZH.md](../docs/STALE_SHARDS_ZH.md) |
+| `droid_v3_referenced.yaml` | 保留旧文件名，现已改为官方 strict 读取；残留分片须先单独修复，不再自动排除 |
 | `libero_v3.yaml` | LIBERO 数据走通用 v3 引擎时的清洗配置，见 [docs/LIBERO_V3.md](../docs/LIBERO_V3.md) |
+
+统一入口支持 `semantic_adapter: auto/lingbot/lerobot/groot`。v2.1 输入需设置 `converted_root`，官方转换副本后按 v3.0 读取。参考 `cleaning/groot_v21_official.yaml`。
 
 ## profiles/ — 数据集审查 profile（手写）
 

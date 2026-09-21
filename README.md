@@ -1,6 +1,22 @@
 # lerobot-cleaner
 
-> GR00T v2.1 cleaning + conservative native LeRobot v3.0 cleaning with LingBot-VLA mapping support.
+## 当前统一架构
+
+Storage（官方 LeRobotDataset）→ Semantic Adapter（LingBot / LeRobot / GR00T）→
+FeatureResolver → CanonicalFeatureSchema → EpisodeBuilder → UnifiedEpisode →
+TrajectoryView → Quality / Integrity → QualityReport + TransformPlan → Transforms →
+Clean UnifiedEpisode → 官方 v3 Dataset Writer → Finalizers。
+
+统一入口 `run` / `audit-v3` / `clean-v3` / `calibrate-v3` 仅使用官方 LeRobot 0.4.2。
+v2.1 输入需配置 `converted_root`，先对副本官方转换再读取；v3.0 直接读取。
+安装 `pip install -e ".[lingbot]"`。旧 v2.1 命令改为 `run-v21-legacy`。
+详细职责、兼容边界和配置见 [三层架构](docs/DATASET_ADAPTERS_ZH.md) 与
+[新版规则、policy 和变换](docs/V3_RULES_AND_TRANSFORMS_ZH.md)。配置模板：
+[完整 v3 policy 示例](configs/cleaning/v3_quality_policy.example.yaml)。
+本次重构按要求未运行程序或测试，历史测试记录不代表本次验证结果。
+
+
+> GR00T v2.1 cleaning + conservative LeRobot v3.0 cleaning with LingBot-VLA mapping support.
 
 ## LIBERO-fastwam v3
 
@@ -8,33 +24,33 @@
 在项目根目录执行 `python scripts/run_libero_clean.py`，默认输出到项目同级的
 `清洗结果/libero_10_clean_v3_reviewed`。该入口按 profile 检查任务文本关联、状态结构、数值和视频，
 自动生成中文报告、逐轨迹质量标记、画面预览及训练就绪检查；全量验证和报告生成后才发布结果。
-保留全部帧并重算统计，支持视频解码续跑；不会生成未经验证的 LingBot 控制映射。
+默认保留全部帧；显式配置 transforms 或拒绝策略后按计划修改。不会生成未经验证的 LingBot 控制映射。
 完整说明见 [LIBERO v3 清洗](docs/LIBERO_V3.md)。
 
 ## 本分支新增：DROID / LingBot-VLA
 
 提供的 `droid_100_lerobotv3` 数据已经是 **LeRobot v3.0**，机器人是 **Franka 单臂**，
-不是 R1Pro。请使用新增的 `clean-v3` 流程，不要对它执行旧版 `run` 或 `export-lingbot`。
+不是 R1Pro。请使用统一的 `clean-v3` 或新版 `run` 流程。
 
 - 新增 v3 元数据、数值和共享视频时间区间检查；可选 PyAV 完整解码检查。
 - 新增保留所有帧的保守清洗：默认遇到非有限值报错，不删帧、不裁剪、不二值化、不转码。
 - 新增 DROID 的 7 关节 + 1 夹爪、3 相机映射、训练起始配置及归一化启动脚本。
-- 输出仍是 v3.0；重算数值统计，保持逐集索引和视频偏移，复制视频并校验 SHA256。
+- 输出仍是 v3.0；无修改计划时复制，修改时由官方 writer 重写保留集、视频、索引和统计。
 - `validate-lingbot` 是数据字段/配置的静态校验，不等于已经跑通 LingBot 训练。
-- DROID 默认改用分批引擎：每批 8,192 行，单集上限 100,000 行，支持数值阶段/视频复制阶段续跑。
+- DROID 标准配置使用官方 LeRobot 0.4.2 读取后端，按 episode 清洗，单集上限 100,000 行，支持校验来源/配置后从原始数据重新执行未完成任务。官方 HF loader 初始化的内存不受 `batch_rows` 限制；统一入口不再支持 `reader_backend: native`。
 - 全局均值/方差等累计全部帧；全局分位数采用固定容量均匀抽样并在报告中注明，逐集分位数精确计算。
 
 **完整数据（2,763 万帧 / 96 GiB 容器）请看 [服务器分批清洗步骤](docs/STREAMING_SERVER_ZH.md)。**
 若遇到“156 个数据文件，但元数据只引用 86 个”的重复索引分片问题，见
 [按元数据选择文件](docs/STALE_SHARDS_ZH.md)。新增配置必须显式指定；默认仍保持严格检查，不删除原始文件。
-仅增大旧引擎 `max_frames` 不会降低内存占用；必须同步新的 Python 文件和 `engine: streaming` 配置。
+`max_frames` 只限制数据集规模；官方 loader 初始化内存不受 cleaner 批次配置限制。
 
 详细说明、修改缘由与 Windows / Linux 操作见 [DROID 使用说明](docs/DROID_GUIDE_ZH.md)。
 
 在本项目根目录执行（默认数据位于本项目同级的 `数据实例` 文件夹）：
 
 ```powershell
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,lingbot]"
 python -m scripts.run_droid_clean --audit-only
 python -m scripts.run_droid_clean
 ```
@@ -44,7 +60,7 @@ python -m scripts.run_droid_clean
 
 普通 v3 数据也可使用通用入口（在 Python 环境中安装本项目后）：
 
-不传配置时保留旧的百万帧内存引擎；大数据必须传入分批配置。
+`memory` / `streaming` 配置入口均进入官方逐集 pipeline；大数据需显式设置规模保护参数。
 
 ```bash
 lerobot-cleaner audit-v3 /absolute/path/to/data
@@ -54,7 +70,8 @@ lerobot-cleaner audit-v3 /absolute/path/to/data --config configs/cleaning/droid_
 lerobot-cleaner clean-v3 /absolute/path/to/data --config configs/cleaning/droid_v3.yaml --output /absolute/path/to/new_output
 ```
 
-v3 路径暂不支持删集、删帧、重采样或旧版 R1–R7 规则，并非任意机器人数据的自动适配器。
+v3 已接入独立检查、policy、静止裁剪、统一删帧、删集、ROI、夹爪和数值变换。
+仅显式计划执行修改；任意机器人仍需配置正确语义和阈值，不隐式重采样。
 以下原有文档描述 **GR00T v2.1 流程**，其能力与限制不要套用到新增 v3 路径。
 
 ## Original GR00T v2.1 workflow
@@ -69,14 +86,14 @@ produces a new clean dataset plus a cleaning report. It never mutates the input.
 
 ```bash
 pip install -e ".[all]"     # matplotlib + opencv + dev
-# Optional v2.1 -> v3.0 converter only (not needed for existing v3 data):
-# pip install -e ".[all,lingbot]"
+# Required official loader for unified v2.1/v3.0 access:
+pip install -e ".[all,lingbot]"
 # Optional v3 video decode validation:
 # pip install -e ".[v3-video]"
 # requires ffmpeg/ffprobe in PATH for video rules
 ```
 
-## Input requirements
+## Legacy GR00T v2.1 input requirements
 
 lerobot-cleaner cleans datasets that are **already in GR00T-format LeRobot v2.1**.
 It does **not** convert raw robot data, and it is not a general cleaner for any
@@ -112,7 +129,7 @@ once with an actionable message, and runs automatically at the start of `run`:
 lerobot-cleaner check ./my_dataset
 ```
 
-## Usage
+## Legacy GR00T v2.1 usage
 
 ### Mode A — config-driven
 
@@ -361,4 +378,6 @@ Trajectory quality supports explicit `quality.groups` with separate source, colu
 
 `smoke-lingbot --level 1` checks the loader (default); `--level 2` adds real LingBot normalization, image/language preprocessing and a training-shaped batch; explicit `--level 3` adds one no-grad model forward. No backward, optimizer or FSDP is run. See the smoke guide above for local asset requirements and scope.
 
-`calibrate-v3 DATASET --config configs/cleaning/droid_v3.yaml --output CALIBRATION_DIR` performs a read-only, per-group Quantile + MAD calibration and writes `calibration_report.json`, `audit.json`, and a full `thresholds.yaml` config. Add `--clean-output CLEAN_DIR` to automatically run the second, row-preserving cleaning pass. Statistics use equally weighted **episode peaks**, not pooled transition values. See the [calibration guide](docs/TRAJECTORY_QUALITY_AND_SMOKE_ZH.md) for exclusions, sample requirements and scope.
+`calibrate-v3 DATASET --config configs/cleaning/droid_v3.yaml --output CALIBRATION_DIR` performs a read-only, per-group Quantile + MAD calibration and writes `calibration_report.json`, `audit.json`, and a full `thresholds.yaml` config. Add `--clean-output CLEAN_DIR` to automatically run the second cleaning pass governed by the configured policy and transform plan. Statistics use equally weighted **episode peaks**, not pooled transition values. See the [calibration guide](docs/TRAJECTORY_QUALITY_AND_SMOKE_ZH.md) for exclusions, sample requirements and scope.
+
+Dataset semantics now use `LingBotAdapter` / `LeRobotAdapter` / `GrootAdapter` → `FeatureResolver` → `CanonicalFeatureSchema` (`FeatureSchema` + `FeatureSlice`) → `EpisodeBuilder` → `UnifiedEpisode` → `TrajectoryView` → quality evaluation. EpisodeBuilder provides explicit timestamp/frame alignment, action-state pairing, missing-value policies and masked padding for asynchronous numeric streams. GR00T retains its modality contract; native v3 and LingBot do not require `modality.json`. DROID cleaning configs select the LingBot adapter through `robot_config`. See [adapter architecture and mapping semantics](docs/DATASET_ADAPTERS_ZH.md).

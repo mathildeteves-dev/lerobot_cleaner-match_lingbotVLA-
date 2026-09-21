@@ -10,10 +10,8 @@ from lerobot_cleaner.v30.review_report import provenance, report_status, write_r
 from lerobot_cleaner.v30.training_readiness import check_readiness
 from lerobot_cleaner.v30.v3 import V3Config
 from lerobot_cleaner.v30.v3_streaming import (
-    audit_streaming,
     clean_streaming,
     job_lock,
-    verify_videos,
     write_json,
 )
 
@@ -30,7 +28,8 @@ def run(args):
     if args.quick:
         config.verify_videos = False
     profile = load_profile(args.profile)
-    output, source = args.output.resolve(), args.dataset.resolve()
+    from lerobot_cleaner.storage import prepare_dataset
+    output, source = args.output.resolve(), prepare_dataset(args.dataset, config)
     if (
         output.exists()
         or source == output
@@ -67,26 +66,15 @@ def run(args):
         partial = output.with_name(output.name + ".partial")
         partial.mkdir(parents=True, exist_ok=False)
         with job_lock(partial):
-            report = audit_streaming(
-                source, config.model_copy(update={"verify_videos": False}), observer=factory(source)
+            from lerobot_cleaner.v30.pipeline import audit_pipeline
+            visual = profile.quality.visual.model_dump(mode="json")
+            visual = visual if visual.pop("enabled") else None
+            if visual is not None:
+                visual["preview_prefix"] = ""
+            report = audit_pipeline(
+                source, config, observer=factory(source),
+                video_quality=visual, preview_root=partial,
             )
-            if config.verify_videos:
-                visual = profile.quality.visual.model_dump(mode="json")
-                if visual.pop("enabled"):
-                    seen, selected = set(), []
-                    limit = visual.pop("preview_limit")
-                    for row in report["dataset_review"]["episode_quality"]:
-                        if row["task_index"] not in seen and len(selected) < limit:
-                            selected.append(row["episode_index"])
-                            seen.add(row["task_index"])
-                    visual["preview_episodes"], visual["preview_prefix"] = selected, ""
-                else:
-                    visual = None
-                info = json.loads((source / "meta/info.json").read_text(encoding="utf-8"))
-                verify_videos(
-                    source, info, report["videos"], config, quality=visual, preview_root=partial
-                )
-                report["video_verification"] = "full_decode"
             write_review_bundle(
                 partial, report, profile, config, project=PROJECT, training=training
             )
@@ -149,7 +137,8 @@ def main():
     try:
         return run(args)
     except Exception as exc:
-        output, source = args.output.resolve(), args.dataset.resolve()
+        from lerobot_cleaner.storage import prepare_dataset
+    output, source = args.output.resolve(), prepare_dataset(args.dataset, config)
         if (
             output != source
             and not output.is_relative_to(source)

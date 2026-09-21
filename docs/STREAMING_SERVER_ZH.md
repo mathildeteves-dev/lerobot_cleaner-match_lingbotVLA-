@@ -1,5 +1,16 @@
 # 完整 DROID 数据：96 GiB 容器上的分批清洗
 
+> 当前统一入口已改为官方 LeRobotDataset → checks/plans → transforms → 官方 writer。
+> 本文下方保留旧 native 引擎的服务器运行记录与操作背景，不能作为新版性能、续跑或测试结论。
+> 新版完整契约以 [规则与变换](V3_RULES_AND_TRANSFORMS_ZH.md) 为准：
+> - `memory` 和 `streaming` 都进入官方逐集 pipeline；官方 HF 初始化内存不受 batch_rows 限制。
+> - 先完整生成报告和计划，再执行变换；报告和计划随集数/删帧数量增长。
+> - 无修改时复制；有修改时官方重写视频、索引、metadata 和统计，可能改变分片与视频偏移。
+> - 支持显式删帧、删集、静止裁剪、ROI、夹爪和数值变换；默认不启用这些结构修改。
+> - --resume 校验来源和配置后重新执行，不复用旧数值/视频检查点或半写入 episode。
+> - 空间预检为输入 meta/data/videos 总大小的三倍加保留空间，并非大小保证。
+> - 本次只修改代码和文档，未运行程序、测试、编译或性能验证。
+
 服务器排查补充：若原始目录混有未引用的重复索引分片，请使用
 [重复分片处理步骤](STALE_SHARDS_ZH.md) 中的显式配置。不要直接修改 total_frames 或删除文件。
 
@@ -39,7 +50,7 @@
 ```bash
 cd /code/lerobot_cleaner-match_lingbotVLA-
 source .venv-cleaner/bin/activate
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,lingbot]"
 python -m scripts.run_droid_clean --help
 ```
 
@@ -84,19 +95,23 @@ python -m scripts.run_droid_clean --dataset "$DATASET" --output "$OUTPUT"
 
 ## 4. 内存、统计与保护参数
 
-默认文件：`configs/cleaning/droid_v3.yaml`。
+默认文件：`configs/cleaning/droid_v3.yaml`。它现在指定 `reader_backend: lerobot`，
+在 LingBot 环境使用官方 LeRobot 0.4.2。官方 HF loader 初始化/缓存的内存不受 `batch_rows` 限制。
+统一入口已移除 native 后端，不能通过修改配置切换回旧读取器。
+下文历史 native 测量不适用于当前官方 loader。
+官方读取异常不会自动切换后端。
 
 | 配置 | 默认值 | 含义 |
 | --- | --- | --- |
 | engine | streaming | 必须使用新分批引擎，不是仅放宽旧引擎限制 |
 | max_frames | 30,000,000 | 数据集总规模的误操作保护，不是一次加载行数 |
-| batch_rows | 8,192 | 数据 parquet 读取批次大小 |
+| batch_rows | 8,192 | cleaner 写入缓冲大小，不限制官方 HF 初始化 |
 | metadata_batch_rows | 64 | 逐集元数据的读取/写出批次大小 |
 | max_episode_frames | 100,000 | 为跨批次插值/逐集统计保留的单集行数上限 |
 | quantile_samples | 32,768 | 每个数值字段的固定容量全局分位数抽样 |
 | disk_reserve_gb | 5 | 磁盘容量预检的额外保留空间，单位 GiB |
 
-内存主要随批次、单集大小、数值维数、抽样容量变化，不再随总帧数线性增长。
+native 后端的清洗缓冲主要随批次、单集大小、数值维数、抽样容量变化，不随总帧数线性增长；此结论不能套用于官方 HF loader 初始化。
 仍会保留紧凑的文件清单、视频区间清单；它们随文件数/集数增长，但不包含全部帧或全部逐集统计。
 PyArrow 解压缓冲、字符串长度和 Python 分配器仍会影响真实峰值，因此不是硬性的内存额度保证。
 异常巨大的单集会被拒绝，而不是无限累积内存。
@@ -180,4 +195,4 @@ python -m ruff check .
 
 本次最终回归：72 项通过、6 项因缺少 ffmpeg 跳过；Ruff 检查通过。
 百万帧合成审计实际处理 1,001,472 帧，测试批次上限 2,048 行、单集 512 行。
-真实 100 集样例使用默认配置，最大输入批次 8,192 行、最长单集 1,627 行，改动数值为 0。
+此前真实 100 集样例使用 native 后端，最大输入批次 8,192 行、最长单集 1,627 行，改动数值为 0。

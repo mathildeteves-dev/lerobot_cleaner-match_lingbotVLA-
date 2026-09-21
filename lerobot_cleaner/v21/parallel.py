@@ -45,10 +45,14 @@ def process_episode(
     codec: str,
     fps: float,
     video_keys: list[str],
+    adapter=None,
 ) -> EpisodeResult:
     """Check an episode, transform it only if accepted, then stage its artifacts."""
-    df = ref.load_parquet()
-    work = EpisodeWork(ref=ref, df=df, keep_indices=list(range(len(df))))
+    if adapter is not None:
+        work = adapter.read_episode(ref.episode_index)
+    else:  # Compatibility for standalone worker callers.
+        df = ref.load_parquet()
+        work = EpisodeWork(ref=ref, df=df, keep_indices=list(range(len(df))))
 
     per_rule_stats = run_episode_stages(work, checks, transforms)
 
@@ -71,7 +75,10 @@ def process_episode(
     ep_stage.mkdir(parents=True, exist_ok=True)
 
     staged_parquet = ep_stage / "data.parquet"
-    work.df.to_parquet(staged_parquet, index=False)
+    if adapter is not None:
+        adapter.write_episode(work, writer=lambda episode: episode.df.to_parquet(staged_parquet, index=False))
+    else:
+        work.df.to_parquet(staged_parquet, index=False)
 
     staged_videos: dict[str, str] = {}
     for vkey, src_path in ref.video_paths.items():

@@ -87,6 +87,9 @@ def test_dry_run_uses_same_acceptance_gate():
     calls = []
     pipeline = Pipeline.__new__(Pipeline)
     pipeline.output = Path("unused-dry-run")
+    ref = make_ref()
+    pipeline.source = SimpleNamespace(read_episode=lambda index: EpisodeWork(
+        ref=ref, df=ref.load_parquet(), keep_indices=[0, 1]))
     report = Mock()
     pipeline._dry_run(
         [make_ref()], [make_rule("reject", calls, True)],

@@ -17,12 +17,22 @@ from lerobot_cleaner.core.quality import (
 )
 
 from .adapter import V30Adapter
+from .quality_options import BoundsCheck, TimestampCheck, LengthCheck, GripperCheck, VideoCheck
+from lerobot_cleaner.core.quality.joint_limits import check_joint_limits
+from lerobot_cleaner.core.quality.zscore import check_zscore
+from lerobot_cleaner.core.quality.percentile import check_percentile
+from lerobot_cleaner.core.quality.integrity.timestamp import check_timestamp
+from lerobot_cleaner.core.quality.integrity.episode_structure import check_episode_structure, check_episode_length
+from lerobot_cleaner.core.quality.embodiment.gripper import check_gripper
 
 ColumnIndex = Annotated[int, Field(strict=True, ge=0)]
 
 
 class QualityThresholds(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    joint_limits: BoundsCheck | None = None
+    percentile_bounds: BoundsCheck | None = None
+    zscore: float | None = Field(None, gt=0)
     velocity: float | None = Field(None, gt=0)
     acceleration: float | None = Field(None, gt=0)
     jerk: float | None = Field(None, gt=0)
@@ -52,6 +62,11 @@ class JointStaticConfig(BaseModel):
 
 
 class TrajectoryQualityConfig(QualityThresholds):
+    timestamp: TimestampCheck = Field(default_factory=TimestampCheck)
+    episode_structure: bool = True
+    episode_length: LengthCheck = Field(default_factory=LengthCheck)
+    gripper: GripperCheck | None = None
+    video: VideoCheck = Field(default_factory=VideoCheck)
     joint_static_ratio: JointStaticConfig | None = None
     enabled: bool = True
     state_column: str = "observation.state"
@@ -86,13 +101,39 @@ def _checks(view, settings, source, columns):
         check_velocity_zscore(view, settings.velocity_zscore, **kwargs),
         check_acceleration_zscore(view, settings.acceleration_zscore, **kwargs),
         check_static_ratio(view, settings.static_epsilon, settings.static_ratio, **kwargs)]
+    width = getattr(view, source).shape[1] if columns is None else len(columns)
+    for bounds, checker in [(settings.joint_limits, check_joint_limits),
+                            (settings.percentile_bounds, check_percentile)]:
+        if bounds is not None:
+            low, high = np.asarray(bounds.low), np.asarray(bounds.high)
+            if (low.ndim > 1 or high.ndim > 1 or low.size not in {1, width}
+                    or high.size not in {1, width} or np.any(low > high)):
+                raise ValueError("Bounds must be ordered scalars or match selected dimensions")
+            results.append(checker(view, bounds.low, bounds.high, **kwargs))
+    if settings.zscore is not None:
+        results.append(check_zscore(view, settings.zscore, **kwargs))
     return {value.rule: value.to_dict() for value in results}
 
 
-def audit_trajectory(frame, fps, config):
-    view = V30Adapter.to_trajectory(frame, fps, config.state_column, config.action_column)
+def audit_trajectory(frame, fps, config, *, adapter=None, metadata=None):
+    view = (adapter.from_frame(frame).to_trajectory() if adapter is not None else
+            V30Adapter.to_trajectory(frame, fps, config.state_column, config.action_column))
     record = {"episode_index": int(frame.episode_index.iloc[0]),
               "checks": {"finite": check_finite(view).to_dict()}}
+    if config.timestamp.enabled:
+        record["checks"]["timestamp"] = check_timestamp(view, **config.timestamp.model_dump(exclude={"enabled"})).to_dict()
+    if config.episode_structure:
+        record["checks"]["episode_structure"] = check_episode_structure(
+            {name: frame[name].to_numpy() for name in frame.columns if name in
+             {"index", "episode_index", "frame_index", "timestamp", "task_index"}},
+            len(frame), record["episode_index"], metadata).to_dict()
+    if config.episode_length.enabled:
+        record["checks"]["episode_length"] = check_episode_length(
+            view, **config.episode_length.model_dump(exclude={"enabled"})).to_dict()
+    if config.gripper is not None:
+        if max(config.gripper.columns) >= getattr(view, config.gripper.source).shape[1]:
+            raise ValueError("Gripper columns exceed canonical feature dimensions")
+        record["checks"]["gripper"] = check_gripper(view, **config.gripper.model_dump()).to_dict()
     if config.joint_static_ratio is not None:
         joint = check_joint_static_ratio(view, **config.joint_static_ratio.model_dump())
         record["checks"][joint.rule] = joint.to_dict()

@@ -13,9 +13,8 @@ from lerobot_cleaner.v30.review_profile import load_profile
 from lerobot_cleaner.v30.v3 import matrix, numeric_keys
 
 
-def task_texts(path):
+def task_texts(frame):
     """Support both an explicit task column and LeRobot's string pandas index."""
-    frame = pd.read_parquet(path)
     if "task_index" not in frame:
         raise ValueError("Missing task_index in tasks.parquet")
     ids = frame["task_index"].to_numpy()
@@ -39,7 +38,10 @@ class DatasetReview:
     def __init__(self, root, profile=None):
         self.root = Path(root).resolve()
         self.profile = profile or load_profile()
-        self.info = json.loads((self.root / "meta/info.json").read_text(encoding="utf-8"))
+        from lerobot_cleaner.storage import OfficialStorage
+        with OfficialStorage(self.root) as storage:
+            self.info = storage.info
+            self.texts = task_texts(storage.tasks)
         if self.info.get("codebase_version") != "v3.0":
             raise ValueError("Review requires LeRobot v3.0")
         features = self.info["features"]
@@ -54,7 +56,6 @@ class DatasetReview:
             raise ValueError(
                 f"Expected profile cameras {self.profile.cameras}; got {sorted(cameras)}"
             )
-        self.texts = task_texts(self.root / "meta/tasks.parquet")
         if len(self.texts) != self.info["total_tasks"]:
             raise ValueError("Task text count differs from info.total_tasks")
         self.rows, self.hashes = [], {}

@@ -16,7 +16,7 @@ from lerobot_cleaner.v21.reader import LeRobotDataset
 from lerobot_cleaner.v21.validate import InputContractError, validate_dataset
 
 app = typer.Typer(
-    help="GR00T v2.1 cleaning and conservative LeRobot v3.0 cleaning.",
+    help="Official LeRobot loading, semantic adapters and quality evaluation; v2.1 converts to v3.0.",
     add_completion=False,
 )
 console = Console()
@@ -45,8 +45,8 @@ def check(dataset: Path = typer.Argument(..., help="Path to a GR00T LeRobot data
         console.print(f"[yellow]⚠ {w}[/yellow]")
 
 
-@app.command()
-def run(
+@app.command("run-v21-legacy")
+def run_legacy(
     dataset: Path = typer.Argument(..., help="Path to the input dataset"),
     config: Optional[Path] = typer.Option(
         None, "--config", "-c", help="Path to cleaning_config.yaml"
@@ -84,6 +84,32 @@ def run(
     report.print_summary()
     report_dir = Path(cfg.output) / "cleaning_report"
     console.print(f"[green]Report:[/green] {report_dir / 'report.md'}")
+
+
+@app.command("run")
+def run(
+    dataset: Path = typer.Argument(..., exists=True, file_okay=False),
+    config: Optional[Path] = typer.Option(None, "--config", "-c", exists=True),
+    output: Optional[Path] = typer.Option(None, "--output", "-o"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    resume: bool = typer.Option(False, "--resume"),
+):
+    """Unified official loader entry; v2.1 requires converted_root in config."""
+    from lerobot_cleaner.v30.v3 import V3Config, audit_v3, clean_v3
+    try:
+        cfg = V3Config.from_yaml(config)
+        if dry_run:
+            if resume:
+                raise ValueError("--resume is only supported for cleaning")
+            report = audit_v3(dataset, cfg)
+        else:
+            if output is None:
+                raise ValueError("Provide --output for cleaning, or --dry-run for quality evaluation")
+            report = clean_v3(dataset, output, cfg, resume=resume)
+        console.print_json(json.dumps(report))
+    except (OSError, ValueError, KeyError, ImportError, RuntimeError) as exc:
+        console.print(f"Run failed: {exc}", markup=False)
+        raise typer.Exit(code=1) from exc
 
 
 def _resolve_config(dataset, config, output, preset, dry_run, num_workers, resume, yes):
@@ -198,7 +224,7 @@ def audit_v3_command(
         cfg = V3Config.from_yaml(config)
         cfg.verify_videos = cfg.verify_videos or verify_videos
         console.print_json(json.dumps(audit_v3(dataset, cfg)))
-    except (OSError, ValueError, KeyError, ImportError) as e:
+    except (OSError, ValueError, KeyError, ImportError, RuntimeError) as e:
         console.print(f"Audit failed: {e}", markup=False)
         raise typer.Exit(code=1) from e
 
@@ -241,7 +267,7 @@ def clean_v3_command(
     verify_videos: bool = typer.Option(False, "--verify-videos"),
     resume: bool = typer.Option(False, "--resume"),
 ):
-    """Clean v3.0 numeric values without removing rows or changing videos."""
+    """Execute v3 transform plans and rebuild a consistent official dataset."""
     from lerobot_cleaner.v30.v3 import V3Config, clean_v3
 
     try:

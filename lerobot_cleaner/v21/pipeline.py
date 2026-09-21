@@ -20,10 +20,10 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
+from lerobot_cleaner.v21.legacy_reader import ACTION_COL, STATE_COL, LegacyGrootAdapter as GrootAdapter
 from lerobot_cleaner.v21.config import CleaningConfig, OutlierMode
 from lerobot_cleaner.v21.inspector import inspect_dataset
 from lerobot_cleaner.v21.parallel import EpisodeResult, process_episode
-from lerobot_cleaner.v21.reader import ACTION_COL, STATE_COL, LeRobotDataset
 from lerobot_cleaner.v21.report import CleaningReport
 from lerobot_cleaner.v21.rules import (
     build_checks,
@@ -48,7 +48,7 @@ class Pipeline:
         # Preflight: fail fast with one clear error if the input does not meet
         # the GR00T-format LeRobot v2.1 contract. Warnings are surfaced via run().
         self.input_warnings = validate_dataset(self.input)
-        self.source = LeRobotDataset(self.input)
+        self.source = GrootAdapter(self.input)
 
     # --- outlier pre-pass ---------------------------------------------------
     def _compute_outlier_bounds(self, refs) -> dict:
@@ -63,7 +63,7 @@ class Pipeline:
         state_chunks, action_chunks = [], []
         for ref in refs:
             try:
-                df = ref.load_parquet()
+                df = self.source.read_episode(ref.episode_index).df
             except Exception:
                 continue
             if STATE_COL in df.columns and len(df):
@@ -128,7 +128,7 @@ class Pipeline:
             with ProcessPoolExecutor(max_workers=self.config.num_workers) as ex:
                 futures = {
                     ex.submit(
-                        process_episode, ref, checks, transforms, staging_root, codec, fps, video_keys
+                        process_episode, ref, checks, transforms, staging_root, codec, fps, video_keys, self.source
                     ): ref
                     for ref in todo
                 }
@@ -140,7 +140,7 @@ class Pipeline:
         finally:
             shutil.rmtree(staging_root, ignore_errors=True)
 
-        report.summary_after = inspect_dataset(LeRobotDataset(self.output))
+        report.summary_after = inspect_dataset(GrootAdapter(self.output))
         report.merge_rule_stats(results)
         self._write_used_config()
         report.write(self.output / "cleaning_report")
@@ -149,12 +149,10 @@ class Pipeline:
     # --- dry run ------------------------------------------------------------
     def _dry_run(self, refs, checks, transforms, report: CleaningReport) -> CleaningReport:
         from lerobot_cleaner.v21.parallel import EpisodeResult
-        from lerobot_cleaner.v21.types import EpisodeWork
 
         results = []
         for ref in tqdm(refs, desc="dry-run"):
-            df = ref.load_parquet()
-            work = EpisodeWork(ref=ref, df=df, keep_indices=list(range(len(df))))
+            work = self.source.read_episode(ref.episode_index)
             res_stats = run_episode_stages(work, checks, transforms)
             res = EpisodeResult(
                 src_index=ref.episode_index,

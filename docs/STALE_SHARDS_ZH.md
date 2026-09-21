@@ -1,3 +1,5 @@
+> 历史说明：以下 metadata_referenced 恢复路径不再由统一清洗入口支持。当前入口只使用官方 strict loader；请在独立副本中修复残留分片后再清洗。旧 droid_v3_referenced.yaml 已改为 strict。
+
 # 重复索引分片：按逐集元数据选择数据文件
 
 ## 已确认的服务器现象

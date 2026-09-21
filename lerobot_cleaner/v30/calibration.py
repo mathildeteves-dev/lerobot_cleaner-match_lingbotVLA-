@@ -75,7 +75,11 @@ def calibrate_v3(dataset, output, config, settings=None, *, clean_output=None):
     settings = settings or CalibrationConfig()
     if not config.quality.enabled or not config.quality.groups:
         raise ValueError("Calibration requires quality.enabled=true and explicit quality.groups")
-    root, output = Path(dataset).resolve(), Path(output).resolve()
+    _outside_new(Path(output).resolve(), Path(dataset).resolve())
+    if clean_output is not None:
+        _outside_new(Path(clean_output).resolve(), Path(dataset).resolve())
+    from lerobot_cleaner.storage import prepare_dataset
+    root, output = prepare_dataset(dataset, config), Path(output).resolve()
     _outside_new(output, root)
     if clean_output is not None:
         clean_output = Path(clean_output).resolve()

@@ -1,3 +1,6 @@
+reader_backend: lerobot
+# Resolve feature semantics through LingBotAdapter; relative to this YAML.
+robot_config: ../robot_configs/droid_franka.yaml
 # Conservative v3 cleaning: preserve every episode/frame and all original videos.
 nonfinite: error
 bounds: {}

@@ -1,16 +1,7 @@
-"""Conservative, row-preserving LeRobot v3.0 audit and numeric cleaning.
-
-No episode/frame removal, resampling or video transformation is performed.
-The legacy memory engine loads all rows with a guard; engine="streaming"
-dispatches to the bounded-batch implementation used by the DROID config.
-"""
+"""V3 configuration and public entry points for the quality/plan/transform pipeline."""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import shutil
-import tempfile
 from pathlib import Path
 from typing import Literal
 
@@ -19,7 +10,9 @@ import pandas as pd
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from lerobot_cleaner.adapters.factory import v3_adapter
 from lerobot_cleaner.v30.quality import TrajectoryQualityConfig, audit_trajectory
+from lerobot_cleaner.v30.policy import QualityPolicy, MutationPolicy
 
 
 class Alias(BaseModel):
@@ -32,7 +25,14 @@ class Alias(BaseModel):
 
 class V3Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    reader_backend: Literal["lerobot"] = "lerobot"
+    semantic_adapter: Literal["auto", "lingbot", "lerobot", "groot"] = "auto"
+    converted_root: Path | None = None
+    modality_config: Path | None = None
+    robot_config: Path | None = None
     quality: TrajectoryQualityConfig = Field(default_factory=TrajectoryQualityConfig)
+    policy: QualityPolicy = Field(default_factory=QualityPolicy)
+    transforms: MutationPolicy = Field(default_factory=MutationPolicy)
     nonfinite: Literal["error", "interpolate"] = "error"
     # Bounds apply only when explicitly requested. No inferred joint limits.
     bounds: dict[str, tuple[float, float]] = Field(default_factory=dict)
@@ -40,7 +40,7 @@ class V3Config(BaseModel):
     verify_videos: bool = False
     max_frames: int = Field(default=1_000_000, gt=0)
     engine: Literal["memory", "streaming"] = "memory"
-    data_file_policy: Literal["strict", "metadata_referenced"] = "strict"
+    data_file_policy: Literal["strict"] = "strict"
     batch_rows: int = Field(default=8192, ge=1, le=65536)
     metadata_batch_rows: int = Field(default=64, ge=1, le=1024)
     max_episode_frames: int = Field(default=100_000, ge=1)
@@ -50,17 +50,35 @@ class V3Config(BaseModel):
 
     @model_validator(mode="after")
     def validate_file_policy(self):
-        if self.data_file_policy != "strict" and self.engine != "streaming":
-            raise ValueError("metadata_referenced requires engine=streaming")
+        for name in ("robot_config", "modality_config", "converted_root"):
+            value = getattr(self, name)
+            if value is not None:
+                setattr(self, name, value.resolve())
+        if self.semantic_adapter == "lingbot" and self.robot_config is None:
+            raise ValueError("LingBot semantics require robot_config")
+        if self.semantic_adapter == "auto" and self.robot_config is not None and self.modality_config is not None:
+            raise ValueError("Select semantic_adapter explicitly when both mappings are configured")
+        if not self.quality.enabled and self.policy.rules:
+            raise ValueError("Per-rule policies require quality.enabled=true")
+        targets = [entry.target for entry in self.aliases]
+        if len(targets) != len(set(targets)):
+            raise ValueError("Duplicate alias targets")
+        if any(item.target in targets for item in self.transforms.numeric):
+            raise ValueError("Transform canonical source features; alias targets synchronize afterward")
         return self
 
     @classmethod
     def from_yaml(cls, path: Path | None) -> V3Config:
-        return (
-            cls()
-            if path is None
-            else cls.model_validate(yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {})
-        )
+        if path is None:
+            return cls()
+        path = Path(path).resolve()
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for name in ("robot_config", "modality_config", "converted_root"):
+            if data.get(name) is not None:
+                value = Path(data[name])
+                data[name] = str((path.parent / value).resolve() if not value.is_absolute() else value)
+        return cls.model_validate(data)
+
 
 
 def safe_path(root: Path, relative: str) -> Path:
@@ -82,129 +100,44 @@ def numeric_keys(info: dict) -> list[str]:
     ]
 
 
-def load_v3(root: Path, max_frames: int = 1_000_000):
-    root = Path(root).resolve()
-    info = json.loads((root / "meta/info.json").read_text(encoding="utf-8"))
-    if info.get("codebase_version") != "v3.0":
-        raise ValueError("This command requires LeRobot v3.0; use run for GR00T v2.1")
-    if not 0 < info["total_frames"] <= max_frames:
-        raise ValueError(f"Empty dataset or total_frames exceeds max_frames={max_frames}")
-    if not np.isfinite(info["fps"]) or info["fps"] <= 0:
-        raise ValueError("fps must be positive and finite")
-    ep_paths = sorted((root / "meta/episodes").glob("chunk-*/*.parquet"))
-    if not ep_paths:
-        raise ValueError("Missing meta/episodes parquet files")
-    ep_tables = [(p, pd.read_parquet(p)) for p in ep_paths]
-    episodes = pd.concat([t for _, t in ep_tables], ignore_index=True)
-    episodes = episodes.sort_values("episode_index").reset_index(drop=True)
-    data_paths = sorted((root / "data").glob("chunk-*/*.parquet"))
-    parts = [(p, pd.read_parquet(p)) for p in data_paths]
-    if not parts:
-        raise ValueError("Missing data parquet files")
-    frame_count = sum(len(t) for _, t in parts)
-    if frame_count != info["total_frames"] or frame_count > max_frames:
-        raise ValueError("Actual row count differs from info.total_frames or exceeds limit")
-    data = pd.concat([t for _, t in parts], ignore_index=True)
-    required = set(info["features"]) - {
-        k for k, v in info["features"].items() if v["dtype"] == "video"
-    }
-    if required - set(data):
-        raise ValueError(f"Missing feature columns: {sorted(required - set(data))}")
-    if len(episodes) != info["total_episodes"] or not np.array_equal(
-        episodes.episode_index, np.arange(len(episodes))
-    ):
-        raise ValueError("Episode count/indices are inconsistent")
-    if not np.array_equal(data["index"], np.arange(len(data))):
-        raise ValueError("Global data index must be contiguous in parquet file order")
-    tasks = pd.read_parquet(root / "meta/tasks.parquet")
-    if len(tasks) != info["total_tasks"] or not np.array_equal(
-        tasks.task_index, np.arange(len(tasks))
-    ):
-        raise ValueError("tasks.parquet indices/count are inconsistent")
-    if not set(data.task_index).issubset(set(tasks.task_index)):
-        raise ValueError("Data references undefined task indices")
-    for key in numeric_keys(info):
-        if matrix(data[key]).shape[1] != int(np.prod(info["features"][key]["shape"])):
-            raise ValueError(f"Feature dimension mismatch: {key}")
-    videos = {}
-    cursor = 0
-    file_ranges = {}
-    for path, table in parts:
-        file_ranges[path.resolve()] = (cursor, cursor + len(table))
-        cursor += len(table)
-    cursor = 0
-    for _, ep in episodes.iterrows():
-        lo, hi = int(ep.dataset_from_index), int(ep.dataset_to_index)
-        if lo != cursor or hi <= lo or hi - lo != int(ep.length) or hi > len(data):
-            raise ValueError(f"Invalid episode interval: {ep.episode_index}")
-        cursor = hi
-        group = data.iloc[lo:hi]
-        if not (group.episode_index == ep.episode_index).all():
-            raise ValueError("Episode metadata does not match data rows")
-        if not np.array_equal(group.frame_index, np.arange(len(group))):
-            raise ValueError("Non-contiguous frame_index")
-        if not np.allclose(group.timestamp, np.arange(len(group)) / info["fps"], atol=1e-4, rtol=0):
-            raise ValueError("Non-uniform timestamps: refusing to relabel time without resampling")
-        path = safe_path(
-            root,
-            info["data_path"].format(
-                chunk_index=int(ep["data/chunk_index"]), file_index=int(ep["data/file_index"])
-            ),
-        )
-        if path not in file_ranges or not file_ranges[path][0] <= lo < file_ranges[path][1]:
-            raise ValueError("Episode data file reference does not contain its first row")
-        for key, feature in info["features"].items():
-            if feature["dtype"] != "video":
-                continue
-            prefix = f"videos/{key}/"
-            path = safe_path(
-                root,
-                info["video_path"].format(
-                    video_key=key,
-                    chunk_index=int(ep[prefix + "chunk_index"]),
-                    file_index=int(ep[prefix + "file_index"]),
-                ),
-            )
-            start, end = float(ep[prefix + "from_timestamp"]), float(ep[prefix + "to_timestamp"])
-            if not path.is_file() or path.stat().st_size == 0:
-                raise ValueError(f"Missing/empty referenced video: {path}")
-            if (
-                not np.isfinite([start, end]).all()
-                or start < 0
-                or not np.isclose(end - start, len(group) / info["fps"], atol=1e-3)
-            ):
-                raise ValueError(f"Invalid episode video interval: {key}, {ep.episode_index}")
-            item = videos.setdefault(
-                str(path.relative_to(root)),
-                {
-                    "expected_end": 0.0,
-                    "intervals": [],
-                    "key": key,
-                },
-            )
-            if item["intervals"] and start < item["expected_end"] - 1e-3:
-                raise ValueError(f"Overlapping video intervals: {key}")
-            item["expected_end"] = end
-            item["intervals"].append([start, end])
-    if cursor != len(data):
-        raise ValueError("Unreferenced trailing data rows")
-    return root, info, data, episodes, parts, ep_tables, videos
+def load_v3(root: Path, max_frames: int = 1_000_000, *, reader_backend="lerobot", config=None):
+    """Memory view supplied exclusively by the official storage boundary."""
+    from lerobot_cleaner.storage import OfficialStorage
+    from lerobot_cleaner.v30.v3_streaming import validate_episode
+    config = config or V3Config(max_frames=max_frames, reader_backend=reader_backend)
+    with OfficialStorage(root, config) as storage:
+        snapshot = storage.memory_snapshot()
+        _, info, data, episodes, _, _, _ = snapshot
+        offset = 0
+        for row in episodes.to_dict("records"):
+            start, stop = int(row["dataset_from_index"]), int(row["dataset_to_index"])
+            if not 0 < stop - start <= config.max_episode_frames:
+                raise ValueError("Episode exceeds configured frame limit")
+            frame = data.iloc[start:stop]
+            storage.validate_episode(row, offset)
+            validate_episode(info, row, int(row["episode_index"]), offset, frame)
+            offset += len(frame)
+        if offset != info["total_frames"]:
+            raise ValueError("Unreferenced data rows")
+        return snapshot
+
+
+def episode_frames(data, episodes):
+    """Use only the offsets supplied by the official metadata snapshot."""
+    for row in episodes.itertuples(index=False):
+        yield data.iloc[int(row.dataset_from_index):int(row.dataset_to_index)]
 
 
 def verify_video_files(root: Path, info: dict, videos: dict) -> None:
-    try:
-        import av
-    except ImportError as e:
-        raise ImportError("Video verification requires pip install -e '.[v3-video]'") from e
+    from lerobot_cleaner.storage.video import decoded_video
     for relative, item in videos.items():
         times = []
-        with av.open(str(root / relative)) as container:
-            stream = container.streams.video[0]
+        with decoded_video(root / relative) as decoded_frames:
             shape = info["features"][item["key"]]["shape"]
-            for frame in container.decode(stream):
+            for frame in decoded_frames:
                 if [frame.height, frame.width, 3] != shape or frame.pts is None:
                     raise ValueError(f"Video dimensions/PTS invalid: {relative}")
-                times.append(float(frame.pts * stream.time_base))
+                times.append(float(frame.pts * frame.time_base))
         ts = np.asarray(times)
         if len(ts) == 0 or not np.allclose(np.diff(ts), 1 / info["fps"], atol=1e-3):
             raise ValueError(f"Video decode/frame spacing failed: {relative}")
@@ -227,34 +160,9 @@ def describe(data: pd.DataFrame, info: dict) -> dict:
 
 
 def audit_v3(dataset: Path, config: V3Config | None = None) -> dict:
-    config = config or V3Config()
-    if config.engine == "streaming":
-        from lerobot_cleaner.v30.v3_streaming import audit_streaming
-
-        return audit_streaming(dataset, config)
-    root, info, data, episodes, _, _, videos = load_v3(dataset, config.max_frames)
-    if config.verify_videos:
-        verify_video_files(root, info, videos)
-    return {
-        "dataset": str(root),
-        "version": "v3.0",
-        "robot_type": info.get("robot_type"),
-        "episodes": len(episodes),
-        "frames": len(data),
-        "fps": info["fps"],
-        "tasks": info["total_tasks"],
-        "numeric": describe(data, info),
-        "trajectory_quality": [audit_trajectory(frame, info["fps"], config.quality)
-                               for _, frame in data.groupby("episode_index", sort=True)] if config.quality.enabled else [],
-        "videos": videos,
-        "video_verification": "full_decode" if config.verify_videos else "metadata_only",
-        "unsuccessful_episodes": int(
-            data.groupby("episode_index")["is_episode_successful"].first().eq(False).sum()
-        )
-        if "is_episode_successful" in data
-        else None,
-        "warning": "No rows are removed. Numeric checks do not prove task success or control semantics.",
-    }
+    """Read-only checks and transform plans; no transforms or dataset writes."""
+    from .pipeline import audit_pipeline
+    return audit_pipeline(dataset, config or V3Config())
 
 
 def feature_stats(arr: np.ndarray) -> dict:
@@ -278,168 +186,7 @@ def put_matrix(data: pd.DataFrame, key: str, arr: np.ndarray, dtype: str) -> Non
     data[key] = arr[:, 0] if scalar else list(arr)
 
 
-def clean_v3(
-    dataset: Path, output: Path, config: V3Config | None = None, *, resume: bool = False
-) -> dict:
-    config = config or V3Config()
-    if config.engine == "streaming":
-        from lerobot_cleaner.v30.v3_streaming import clean_streaming
-
-        return clean_streaming(dataset, output, config, resume=resume)
-    if resume:
-        raise ValueError("resume is supported only by the streaming engine")
-    root, info, data, episodes, parts, ep_tables, videos = load_v3(dataset, config.max_frames)
-    output = Path(output).resolve()
-    if output.exists() or output.is_relative_to(root) or root.is_relative_to(output):
-        raise ValueError("Output must be a new directory outside the input dataset")
-    if config.verify_videos:
-        verify_video_files(root, info, videos)
-    before = describe(data, info)
-    quality_input = [
-        audit_trajectory(frame, info["fps"], config.quality)
-        for _, frame in data.groupby("episode_index", sort=True)
-    ] if config.quality.enabled else []
-    changes = {}
-    keys = numeric_keys(info)
-    alias_targets = {a.target for a in config.aliases}
-    if len(alias_targets) != len(config.aliases):
-        raise ValueError("Duplicate alias targets")
-    if alias_targets & set(config.bounds):
-        raise ValueError("Set bounds on canonical source, not on an alias target")
-    for alias in config.aliases:
-        if alias.source not in keys or alias.target not in keys or alias.source in alias_targets:
-            raise ValueError("Alias must reference numeric columns without chained/cyclic aliases")
-        source, target = matrix(data[alias.source]), matrix(data[alias.target])
-        if (
-            not 0 <= alias.start < alias.end <= source.shape[1]
-            or alias.end - alias.start != target.shape[1]
-        ):
-            raise ValueError("Invalid alias slice")
-        if not np.allclose(source[:, alias.start : alias.end], target, equal_nan=True):
-            raise ValueError(f"Alias mismatch in source dataset: {alias.source} -> {alias.target}")
-    for key, (low, high) in config.bounds.items():
-        if key not in keys or not info["features"][key]["dtype"].startswith("float"):
-            raise ValueError(f"Bounds require a floating-point feature: {key}")
-        if not np.isfinite([low, high]).all() or low >= high:
-            raise ValueError(f"Invalid bounds: {key}")
-    for key in keys:
-        if key in alias_targets:
-            continue
-        arr = matrix(data[key]).astype(np.float64)
-        original = arr.copy()
-        if not np.isfinite(arr).all():
-            if config.nonfinite == "error" or key in {
-                "timestamp",
-                "index",
-                "frame_index",
-                "episode_index",
-                "task_index",
-            }:
-                raise ValueError(f"Non-finite values in {key}; no output was written")
-            for _, ep in episodes.iterrows():
-                lo, hi = int(ep.dataset_from_index), int(ep.dataset_to_index)
-                for dim in range(arr.shape[1]):
-                    values = arr[lo:hi, dim]
-                    valid = np.isfinite(values)
-                    if not valid.any():
-                        raise ValueError(
-                            f"Cannot interpolate entirely invalid {key} in episode {ep.episode_index}"
-                        )
-                    x = np.arange(len(values))
-                    values[~valid] = np.interp(x[~valid], x[valid], values[valid])
-        if key in config.bounds:
-            arr = np.clip(arr, *config.bounds[key])
-        count = int((~np.isclose(arr, original, rtol=0, atol=0, equal_nan=True)).sum())
-        if count:
-            put_matrix(data, key, arr, info["features"][key]["dtype"])
-            changes[key] = count
-    for alias in config.aliases:
-        values = matrix(data[alias.source])[:, alias.start : alias.end]
-        count = int(
-            (~np.isclose(values, matrix(data[alias.target]), rtol=0, atol=0, equal_nan=True)).sum()
-        )
-        if count:
-            put_matrix(data, alias.target, values, info["features"][alias.target]["dtype"])
-            changes[alias.target] = count
-    stats = json.loads((root / "meta/stats.json").read_text(encoding="utf-8"))
-    ep_stats = {}
-    for key in keys:
-        arr = matrix(data[key])
-        stats[key] = feature_stats(arr)
-        for _, ep in episodes.iterrows():
-            values = feature_stats(arr[int(ep.dataset_from_index) : int(ep.dataset_to_index)])
-            ep_stats.setdefault(int(ep.episode_index), {}).update(
-                {f"stats/{key}/{name}": value for name, value in values.items()}
-            )
-    report = {
-        "input": str(root),
-        "output": str(output),
-        "version": "v3.0",
-        "episodes": len(episodes),
-        "frames": len(data),
-        "changed_values": changes,
-        "rows_removed": 0,
-        "video_verification": "full_decode" if config.verify_videos else "metadata_only",
-        "trajectory_quality_input": quality_input,
-        "numeric_before": before,
-        "numeric_after": describe(data, info),
-        "policy": "Preserve every row, task, timestamp, video offset and extra feature; no success filtering.",
-        "video_sha256": {},
-    }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".clean-v3-", dir=output.parent) as temporary:
-        stage = Path(temporary) / "dataset"
-        stage.mkdir()
-        # Copy standard components only; source images/ placeholders and local junk are not data.
-        shutil.copytree(root / "meta", stage / "meta")
-        cursor = 0
-        for path, table in parts:
-            dest = stage / path.relative_to(root)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            data.iloc[cursor : cursor + len(table)].to_parquet(dest, index=False)
-            cursor += len(table)
-        for path, table in ep_tables:
-            updated = pd.DataFrame(
-                [ep_stats[int(i)] for i in table.episode_index], index=table.index
-            )
-            table = pd.concat(
-                [table.drop(columns=updated.columns, errors="ignore"), updated], axis=1
-            )
-            table.to_parquet(stage / path.relative_to(root), index=False)
-        (stage / "meta/stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
-        for relative in videos:
-            dest = stage / relative
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(root / relative, dest)
-
-            def digest(path):
-                h = hashlib.sha256()
-                with path.open("rb") as f:
-                    for block in iter(lambda: f.read(4 * 1024 * 1024), b""):
-                        h.update(block)
-                return h.hexdigest()
-
-            source_hash = digest(root / relative)
-            if digest(dest) != source_hash:
-                raise RuntimeError("Copied video checksum mismatch")
-            report["video_sha256"][relative] = source_hash
-        _, output_info, output_data, _, _, _, _ = load_v3(stage, config.max_frames)
-        report["trajectory_quality_output"] = [
-            audit_trajectory(frame, output_info["fps"], config.quality)
-            for _, frame in output_data.groupby("episode_index", sort=True)
-        ] if config.quality.enabled else []
-        report_dir = stage / "cleaning_report"
-        report_dir.mkdir()
-        (report_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-        (report_dir / "cleaning_config.used.yaml").write_text(
-            yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False), encoding="utf-8"
-        )
-        (report_dir / "report.md").write_text(
-            f"# LeRobot v3 cleaning report\n\nEpisodes: {len(episodes)}; frames: {len(data)}.\n\n"
-            f"Changed values: {changes}. No frames removed.\n\n"
-            f"Video verification: {report['video_verification']}. Videos copied byte-for-byte (SHA256 checked).\n\n"
-            "LingBot normalization must still be computed with its own compute_norm.py.\n",
-            encoding="utf-8",
-        )
-        stage.rename(output)
-    return report
+def clean_v3(dataset: Path, output: Path, config: V3Config | None = None, *, resume=False) -> dict:
+    """Execute explicit plans, write official v3 data, finalize and recheck output."""
+    from .pipeline import clean_pipeline
+    return clean_pipeline(dataset, output, config or V3Config(), resume=resume)

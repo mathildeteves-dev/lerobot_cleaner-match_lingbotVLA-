@@ -1,7 +1,11 @@
-# Explicit opt-in for the diagnosed server dataset with stale, unreferenced shards.
+# Legacy filename retained; official access now requires a repaired, strict dataset.
+reader_backend: lerobot
+# Resolve feature semantics through LingBotAdapter; relative to this YAML.
+robot_config: ../robot_configs/droid_franka.yaml
+# Stale/unreferenced shards must be repaired separately before using this config.
 # Does NOT delete originals, change total_frames, or bypass index/video checks.
 engine: streaming
-data_file_policy: metadata_referenced
+data_file_policy: strict
 nonfinite: error
 bounds: {}
 verify_videos: false

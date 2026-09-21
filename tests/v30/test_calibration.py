@@ -212,3 +212,16 @@ def test_cli_insufficient_calibration_is_nonzero(v3_data, tmp_path):
     assert result.exit_code == 2, result.output
     assert (tmp_path / "cal/calibration_report.json").is_file()
     assert not (tmp_path / "cal/thresholds.yaml").exists()
+
+
+def test_lingbot_adapter_survives_generated_config_roundtrip(calibration_data, tmp_path):
+    robot = Path(__file__).resolve().parents[2] / "configs/robot_configs/droid_franka.yaml"
+    cfg = config("streaming").model_copy(update={"robot_config": robot})
+    report = calibrate_v3(calibration_data, tmp_path / "cal", cfg,
+                          CalibrationConfig(min_samples=2), clean_output=tmp_path / "clean")
+    assert report["status"] == "ready"
+    generated = V3Config.from_yaml(tmp_path / "cal/thresholds.yaml")
+    assert generated.robot_config == robot
+    cleaned = json.loads((tmp_path / "clean/cleaning_report/report.json").read_text(encoding="utf-8"))
+    assert cleaned["adapter"]["type"] == "LingBotAdapter"
+    assert not (tmp_path / "clean/meta/modality.json").exists()

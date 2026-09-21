@@ -69,6 +69,7 @@ def export_lingbot_dataset(
             archive = staged_dataset / "cleaning_report"
             archive.mkdir(exist_ok=True)
             shutil.copy2(dataset / "meta/modality.json", archive / "source_modality.v21.json")
+            shutil.copy2(dataset / "meta/modality.json", staged_dataset / "meta/modality.json")
         shutil.move(str(staged_dataset), str(output))
 
     return output

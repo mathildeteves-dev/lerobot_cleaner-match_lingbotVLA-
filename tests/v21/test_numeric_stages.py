@@ -140,7 +140,8 @@ def test_quantile_prepass_ignores_nonfinite_samples():
     pipeline = Pipeline.__new__(Pipeline)
     pipeline.config = CleaningConfig(rules={"numeric_sanity": {"enabled": True, "outlier_mode": "clip_quantile"}})
     w = work([[0, np.nan], [2, np.inf], [np.nan, -np.inf]])
-    bounds = pipeline._compute_outlier_bounds([SimpleNamespace(load_parquet=lambda: w.df)])
+    pipeline.source = SimpleNamespace(read_episode=lambda index: w)
+    bounds = pipeline._compute_outlier_bounds([SimpleNamespace(episode_index=0)])
     low, high = bounds["state"]
     np.testing.assert_allclose([low[0], high[0]], [.02, 1.98])
     assert low[1] == -np.inf and high[1] == np.inf

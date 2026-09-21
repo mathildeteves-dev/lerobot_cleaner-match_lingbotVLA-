@@ -55,6 +55,7 @@ def test_worker_and_dry_run_propagate_rejected_check_results():
     report = CleaningReport(None, None, [check.name])
     report.write = Mock()
     pipeline = Pipeline.__new__(Pipeline)
+    pipeline.source = SimpleNamespace(read_episode=lambda index: episode)
     pipeline.output = Path("unused-quality-dry-run")
     pipeline._dry_run([ref], [check], [], report)
     assert report.episode_quality[18]["checks"][check.name]["passed"] is False

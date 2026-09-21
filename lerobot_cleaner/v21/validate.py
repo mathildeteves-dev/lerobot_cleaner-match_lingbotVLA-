@@ -107,7 +107,7 @@ def validate_dataset(root: str | Path) -> list[str]:
         problems.append(
             f"missing required meta file: meta/{MODALITY_FILE}. This file is "
             f"specific to GR00T-format datasets; a plain LeRobot dataset will not "
-            f"have it. lerobot-cleaner requires it to resolve state/action keys."
+            f"have it. The GR00T adapter requires it to resolve state/action keys; native v3/LingBot paths do not."
         )
     else:
         try:

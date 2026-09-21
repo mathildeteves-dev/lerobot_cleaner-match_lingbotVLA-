@@ -94,6 +94,7 @@ def test_dry_run_exports_transform_metrics_to_both_json_reports():
     report = CleaningReport(None, SimpleNamespace(to_dict=lambda: {}), [])
     report.write = Mock()
     pipeline = Pipeline.__new__(Pipeline)
+    pipeline.source = SimpleNamespace(read_episode=lambda index: episode)
     pipeline.output = Path("unused-transform-report")
     pipeline._dry_run([ref], [], [rule], report)
     record = report.episode_quality[18]["transforms"][rule.name]
