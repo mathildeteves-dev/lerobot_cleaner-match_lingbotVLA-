@@ -57,12 +57,15 @@ def report_status(report):
         for video in report.get("videos", {}).values()
         for row in video.get("visual_review", {}).get("episodes", [])
     )
+    language = report.get("dataset_quality", {}).get("language", {})
     return {
+        "language_integrity_failed_episodes": language.get("episodes_failed"),
+        "language_warning_count": language.get("warning_count"),
         "status": "failed"
-        if failures
+        if failures or language.get("episodes_failed", 0)
         else (
             "warning"
-            if candidates or visual or report.get("video_verification") != "full_decode"
+            if candidates or visual or language.get("warning_count", 0) or report.get("video_verification") != "full_decode"
             else "passed"
         ),
         "nonfinite": failures,
@@ -87,6 +90,9 @@ def write_review_bundle(folder, report, profile, config, *, project, training=No
         "blockers": ["Action semantics not verified", "Actual LingBot batch not loaded"],
     }
     report["review_summary"] = summary
+    # Runtime/semantic preflight is not the model contract result. Preserve both.
+    report["training_runtime_preflight"] = training
+    training = report.get("training_readiness", training)
     report["training_readiness"] = training
     report["provenance"] = provenance(project)
     for key in ["output_review"]:
@@ -100,6 +106,7 @@ def write_review_bundle(folder, report, profile, config, *, project, training=No
         {k: v for k, v in review.items() if k != "episode_quality"},
     )
     write_json(folder / "training_readiness.json", training)
+    write_json(folder / "language_quality.json", report.get("dataset_quality", {}).get("language", {"status": "not_evaluated"}))
     (folder / "profile.used.yaml").write_text(
         yaml.safe_dump(profile.model_dump(mode="json"), allow_unicode=True, sort_keys=False),
         encoding="utf-8",
@@ -143,6 +150,7 @@ def write_review_bundle(folder, report, profile, config, *, project, training=No
         f"轨迹：{report['episodes']}；帧：{report['frames']}；任务：{report['tasks']}；FPS：{report['fps']}。",
         "",
         f"非有限数值：{summary['nonfinite'] or '未发现'}。",
+        f"语言完整性异常轨迹：{summary['language_integrity_failed_episodes']}；语言提示：{summary['language_warning_count']}。详见 language_quality.json。",
         f"数值质量候选轨迹：{summary['numeric_quality_candidate_episodes']}；视频候选（相机×轨迹）：{summary['visual_candidate_camera_episodes']}。",
         f"视频验证方式：{report['video_verification']}；修改数值：{report.get('changed_values', '仅检查')}；删除帧：{report.get('rows_removed', '仅检查')}。",
         "",
@@ -171,6 +179,7 @@ def write_review_bundle(folder, report, profile, config, *, project, training=No
         )
     lines += ["", "## 训练就绪", "", f"状态：{training['status']}。", ""]
     lines += [f"- {reason}" for reason in training.get("blockers", [])]
+    lines += [f"- {item['severity']}: {item['message']}" for item in training.get("findings", [])]
     lines += [
         "",
         "## 复核入口",

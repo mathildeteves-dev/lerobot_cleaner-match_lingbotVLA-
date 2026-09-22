@@ -123,10 +123,10 @@ def test_yaml_relative_robot_path_and_native_fallback(v3_data, tmp_path):
 
 def test_bad_robot_slice_fails_before_clean_output(v3_data, tmp_path):
     robot = yaml.safe_load(ROBOT.read_text(encoding="utf-8"))
-    robot["actions"][0]["action.arm.position"]["origin_keys"][0]["action"]["end"] = 99
+    robot["actions"][0]["action.arm.position"]["origin_keys"][0]["action"]["end"] = 0
     path = tmp_path / "bad.yaml"
     path.write_text(yaml.safe_dump(robot))
-    with pytest.raises(ValueError, match="Slice out of bounds"):
+    with pytest.raises(ValueError, match="empty slice"):
         clean_v3(v3_data, tmp_path / "out", V3Config(robot_config=path))
     assert not (tmp_path / "out").exists()
 

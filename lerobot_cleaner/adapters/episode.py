@@ -70,10 +70,44 @@ class UnifiedEpisode:
     metadata: dict = field(default_factory=dict)
     feature_schema: object | None = None
     assembly_policy: object | None = None
+    task_catalog: tuple | None = None
+
+    @property
+    def visual_features(self):
+        return self.feature_schema.visual if self.feature_schema is not None else (self.camera_features or ())
+
+    @property
+    def language(self):
+        """Immutable evidence resolved from current rows, including after frame selection."""
+        from .language import resolve_language
+        metadata = dict(self.metadata)
+        if "tasks" not in metadata and self.ref.tasks:
+            metadata["tasks"] = self.ref.tasks
+        frame, positions = self.df, self.keep_indices
+        valid = metadata.get("assembly", {}).get("valid_mask")
+        if valid is not None:
+            selected = [i for i, position in enumerate(positions) if valid[position]]
+            frame = frame.iloc[selected]
+            positions = [positions[i] for i in selected]
+        return resolve_language(frame, self.episode_index, metadata, self.task_catalog,
+            getattr(self.feature_schema, "language", None), positions)
 
     @property
     def episode_index(self):
         return self.ref.episode_index
+
+    def feature_arrays(self, modality):
+        """Read-only named features, without flattening semantic boundaries."""
+        if modality not in {"state", "action"}:
+            raise ValueError("Expected state or action modality")
+        features = (self.feature_schema.states if modality == "state" else self.feature_schema.actions) if self.feature_schema else (
+            self.state_features if modality == "state" else self.action_features)
+        arrays = {}
+        for feature in features or ():
+            values = feature.extract(self.df)
+            values.setflags(write=False)
+            arrays[feature.name] = values
+        return arrays
 
     def to_trajectory(self, fps=None, state_column="observation.state", action_column="action", *, include_padding=False):
         fps = self.fps if fps is None else fps
@@ -95,7 +129,11 @@ class UnifiedEpisode:
         state, action = EpisodeBuilder(schema, fps, self.assembly_policy).arrays(frame)
         timestamps = (frame["timestamp"].to_numpy(dtype=float) if "timestamp" in frame
                       else indices.astype(float) / fps)
-        return TrajectoryView(state, action, timestamps, fps)
+        from .resolver import FeatureResolver
+        resolver = FeatureResolver()
+        return TrajectoryView(state, action, timestamps, fps,
+            resolver.column_semantics(schema, "state", state.shape[1]),
+            resolver.column_semantics(schema, "action", action.shape[1]))
 
     def drop(self, reason: str) -> None:
         self.dropped = True

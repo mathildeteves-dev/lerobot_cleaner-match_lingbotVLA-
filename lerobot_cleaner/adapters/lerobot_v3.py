@@ -2,7 +2,10 @@
 from lerobot_cleaner.storage import OfficialStorage
 
 from .base import DatasetAdapter
-from .schema import FeatureSchema, FeatureSlice
+from .schema import FeatureSchema
+from lerobot_cleaner.core.physical import PHYSICAL_FIELDS
+from .mapping import FeatureSpec, SourceSpec
+from .resolver import FeatureResolver
 
 
 class LeRobotAdapter(DatasetAdapter):
@@ -34,9 +37,8 @@ class LeRobotAdapter(DatasetAdapter):
         spec = self.info["features"].get(column)
         if spec is None:
             return ()
-        if len(spec["shape"]) != 1:
-            raise ValueError(f"Expected vector feature: {column}")
-        return (FeatureSchema(column, modality, (FeatureSlice(column, 0, spec["shape"][0]),)),)
+        return FeatureResolver().resolve_mapping(
+            (FeatureSpec(column, modality, (SourceSpec(column),), **{key: spec[key] for key in PHYSICAL_FIELDS if key in spec}),), self.info["features"])
 
     def get_state_features(self):
         return self._feature("state", self.config.quality.state_column)
@@ -45,8 +47,8 @@ class LeRobotAdapter(DatasetAdapter):
         return self._feature("action", self.config.quality.action_column)
 
     def get_camera_features(self):
-        return tuple(FeatureSchema(name, "video", camera_column=name)
-                     for name, spec in self.info["features"].items() if spec["dtype"] == "video")
+        return tuple(FeatureResolver().resolve_visual(FeatureSchema(name, "visual", camera_column=name), self.info["features"])
+                     for name, spec in self.info["features"].items() if spec["dtype"] in {"video", "image"})
 
     def describe(self):
         return {**super().describe(), "reader_backend": "lerobot",

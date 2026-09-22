@@ -11,6 +11,8 @@ import pandas as pd
 from lerobot_cleaner.v30.quality import TrajectoryQualityConfig, audit_trajectory
 from lerobot_cleaner.v30.review_profile import load_profile
 from lerobot_cleaner.v30.v3 import matrix, numeric_keys
+from lerobot_cleaner.adapters.language import task_catalog, resolve_language
+from lerobot_cleaner.core.language import text_error, valid_index
 
 
 def task_texts(frame):
@@ -41,7 +43,10 @@ class DatasetReview:
         from lerobot_cleaner.storage import OfficialStorage
         with OfficialStorage(self.root) as storage:
             self.info = storage.info
-            self.texts = task_texts(storage.tasks)
+            self.task_catalog = task_catalog(storage.tasks)
+            counts = Counter(index for index, _ in self.task_catalog if valid_index(index))
+            self.texts = {int(index): text for index, text in self.task_catalog
+                          if valid_index(index) and counts[index] == 1 and text_error(text) is None}
         if self.info.get("codebase_version") != "v3.0":
             raise ValueError("Review requires LeRobot v3.0")
         features = self.info["features"]
@@ -51,24 +56,31 @@ class DatasetReview:
                 raise ValueError(
                     f"Not the supported LIBERO schema/profile: {key} must be float[{width}]"
                 )
-        cameras = {k for k, v in features.items() if v["dtype"] == "video"}
+        cameras = {k for k, v in features.items() if v["dtype"] in {"video", "image"}}
         if cameras != set(self.profile.cameras):
             raise ValueError(
                 f"Expected profile cameras {self.profile.cameras}; got {sorted(cameras)}"
             )
-        if len(self.texts) != self.info["total_tasks"]:
-            raise ValueError("Task text count differs from info.total_tasks")
+        self.frames_without_task_text = 0
+        # Generic language findings report invalid tables; profile summaries must
+        # not prevent the unified quality report from being written.
+        self.feature_schema = None
         self.rows, self.hashes = [], {}
         self.frame_counts, self.episode_counts = Counter(), Counter()
 
+    def set_feature_schema(self, schema):
+        """Use the same canonical layout as the pipeline quality checks."""
+        self.feature_schema = schema
+
     def process(self, metadata, frame):
         eid, length = int(metadata["episode_index"]), len(frame)
-        tasks = frame.task_index.unique()
-        if len(tasks) != 1 or tasks[0] not in self.texts:
-            raise ValueError(f"Multiple tasks or unresolved language in episode {eid}")
-        task = int(tasks[0])
-        self.frame_counts[task] += length
-        self.episode_counts[task] += 1
+        language = resolve_language(frame, eid, metadata, self.task_catalog)
+        tasks = Counter(int(item.task_index) for item in language.samples
+                        if valid_index(item.task_index) and item.task_index in self.texts)
+        self.frames_without_task_text += length - sum(tasks.values())
+        self.frame_counts.update(tasks)
+        self.episode_counts.update(tasks.keys())
+        task = next(iter(tasks)) if len(tasks) == 1 else None
         for alias in self.profile.aliases:
             if not np.allclose(
                 matrix(frame[alias.source])[:, alias.start : alias.end],
@@ -91,13 +103,14 @@ class DatasetReview:
             "seconds": length / self.info["fps"],
             "flags": [],
             "nonfinite": nonfinite,
-            "task": self.texts[task],
+            "task": self.texts.get(task),
+            "task_indices": sorted(tasks),
         }
         trajectory_quality = audit_trajectory(frame, self.info["fps"], TrajectoryQualityConfig(
             state_column=self.profile.state_feature, action_column=self.profile.action_feature,
             groups=self.profile.quality.groups,
             joint_static_ratio=self.profile.quality.joint_static_ratio,
-        ))
+        ), schema=self.feature_schema)
         row["trajectory_checks"] = trajectory_quality["checks"]
         if "groups" in trajectory_quality:
             row["trajectory_groups"] = trajectory_quality["groups"]
@@ -157,7 +170,7 @@ class DatasetReview:
             "episodes": len(lengths),
             "frames": sum(lengths),
             "fps": self.info["fps"],
-            "frames_without_task_text": 0,
+            "frames_without_task_text": self.frames_without_task_text,
             "language_source": "meta/tasks.parquet joined via task_index",
             "tasks": [
                 {

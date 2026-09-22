@@ -12,10 +12,10 @@ class RulePolicy(StrictModel):
     on_unevaluated: Literal["report", "warn", "reject_episode", "abort"] = "warn"
 
 
-RULE_NAMES = {"finite", "timestamp", "episode_structure", "episode_length", "video_integrity",
+RULE_NAMES = {"language_integrity", "finite", "timestamp", "episode_structure", "episode_length", "video_integrity", "visual_integrity",
               "velocity", "acceleration", "jerk", "velocity_zscore", "acceleration_zscore",
               "static_ratio", "joint_static_ratio", "static_edges", "joint_limits", "zscore",
-              "percentile_outlier", "gripper", "blur", "roi", "aliases"}
+              "percentile_outlier", "gripper", "blur", "black_frame", "brightness", "roi", "aliases"}
 
 
 class QualityPolicy(StrictModel):
@@ -23,6 +23,17 @@ class QualityPolicy(StrictModel):
     rules: dict[str, RulePolicy] = Field(default_factory=dict)
     # Input decisions drive mutation; output decisions gate publication, never trigger a loop.
     output_on_fail: Literal["report", "abort"] = "report"
+
+    @model_validator(mode="before")
+    @classmethod
+    def visual_alias(cls, data):
+        if isinstance(data, dict) and "video_integrity" in data.get("rules", {}):
+            rules = dict(data["rules"])
+            if "visual_integrity" in rules:
+                raise ValueError("Use visual_integrity or legacy video_integrity policy, not both")
+            rules["visual_integrity"] = rules.pop("video_integrity")
+            return {**data, "rules": rules}
+        return data
 
     @model_validator(mode="after")
     def valid_rules(self):

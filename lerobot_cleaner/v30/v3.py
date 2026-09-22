@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from lerobot_cleaner.adapters.factory import v3_adapter
 from lerobot_cleaner.v30.quality import TrajectoryQualityConfig, audit_trajectory
 from lerobot_cleaner.v30.policy import QualityPolicy, MutationPolicy
+from lerobot_cleaner.training.config import TrainingCheckConfig
 
 
 class Alias(BaseModel):
@@ -26,10 +27,12 @@ class Alias(BaseModel):
 class V3Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reader_backend: Literal["lerobot"] = "lerobot"
-    semantic_adapter: Literal["auto", "lingbot", "lerobot", "groot"] = "auto"
+    semantic_adapter: Literal["auto", "generic", "lingbot", "lerobot", "groot"] = "auto"
     converted_root: Path | None = None
     modality_config: Path | None = None
     robot_config: Path | None = None
+    mapping_config: Path | None = None
+    training_check: TrainingCheckConfig | None = None
     quality: TrajectoryQualityConfig = Field(default_factory=TrajectoryQualityConfig)
     policy: QualityPolicy = Field(default_factory=QualityPolicy)
     transforms: MutationPolicy = Field(default_factory=MutationPolicy)
@@ -50,14 +53,19 @@ class V3Config(BaseModel):
 
     @model_validator(mode="after")
     def validate_file_policy(self):
-        for name in ("robot_config", "modality_config", "converted_root"):
+        for name in ("robot_config", "modality_config", "mapping_config", "converted_root"):
             value = getattr(self, name)
             if value is not None:
                 setattr(self, name, value.resolve())
         if self.semantic_adapter == "lingbot" and self.robot_config is None:
             raise ValueError("LingBot semantics require robot_config")
-        if self.semantic_adapter == "auto" and self.robot_config is not None and self.modality_config is not None:
-            raise ValueError("Select semantic_adapter explicitly when both mappings are configured")
+        if self.semantic_adapter == "generic" and self.mapping_config is None:
+            raise ValueError("Generic semantics require mapping_config")
+        if self.semantic_adapter == "auto" and sum(value is not None for value in
+                (self.robot_config, self.modality_config, self.mapping_config)) > 1:
+            raise ValueError("Select semantic_adapter explicitly when multiple mappings are configured")
+        if self.mapping_config is not None and self.semantic_adapter not in {"auto", "generic"}:
+            raise ValueError("mapping_config requires semantic_adapter=generic or auto")
         if not self.quality.enabled and self.policy.rules:
             raise ValueError("Per-rule policies require quality.enabled=true")
         targets = [entry.target for entry in self.aliases]
@@ -73,10 +81,15 @@ class V3Config(BaseModel):
             return cls()
         path = Path(path).resolve()
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        for name in ("robot_config", "modality_config", "converted_root"):
+        for name in ("robot_config", "modality_config", "mapping_config", "converted_root"):
             if data.get(name) is not None:
                 value = Path(data[name])
                 data[name] = str((path.parent / value).resolve() if not value.is_absolute() else value)
+        if data.get("training_check"):
+            for name in ("robot_config", "train_config"):
+                if data["training_check"].get(name):
+                    value = Path(data["training_check"][name])
+                    data["training_check"][name] = str((path.parent / value).resolve() if not value.is_absolute() else value)
         return cls.model_validate(data)
 
 
@@ -159,10 +172,10 @@ def describe(data: pd.DataFrame, info: dict) -> dict:
     return result
 
 
-def audit_v3(dataset: Path, config: V3Config | None = None) -> dict:
+def audit_v3(dataset: Path, config: V3Config | None = None, *, output_check=False) -> dict:
     """Read-only checks and transform plans; no transforms or dataset writes."""
     from .pipeline import audit_pipeline
-    return audit_pipeline(dataset, config or V3Config())
+    return audit_pipeline(dataset, config or V3Config(), output_check=output_check)
 
 
 def feature_stats(arr: np.ndarray) -> dict:

@@ -16,6 +16,7 @@ from lerobot_cleaner.transforms.executor import execute_plan
 from lerobot_cleaner.transforms.episode_filter import EpisodeFilter
 from lerobot_cleaner.finalizers import finalize_v3
 from .planning import build_plan
+from lerobot_cleaner.core.quality.integrity.language import summarize_language
 from .percentiles import resolve_percentiles
 from .v3_stream_stats import NumericSummary
 
@@ -47,6 +48,8 @@ def _scan(storage, adapter, config, observer=None, output_check=False):
     from .v3_streaming import check_config
     check_config(storage.info, config)
     totals, records, plans, videos = _numeric(storage), [], [], {}
+    if observer is not None and hasattr(observer, "set_feature_schema"):
+        observer.set_feature_schema(adapter.get_feature_schema())
     frame_count = 0
     image_resources = set()
     unsuccessful = 0
@@ -82,9 +85,11 @@ def _scan(storage, adapter, config, observer=None, output_check=False):
         "engine": "official_episode_pipeline", "requested_engine": config.engine, "episodes": len(records), "frames": frame_count,
         "fps": storage.info["fps"], "tasks": storage.info["total_tasks"],
         "robot_type": storage.info.get("robot_type"), "numeric": {k: v.result() for k, v in totals.items()},
+        "language": summarize_language(records),
         "trajectory_quality": records, "transform_plans": [plan.to_dict() for plan in plans],
         "quality_policy": summarize_policy(records), "videos": videos,
-        "video_verification": "sampled_decode" if config.quality.video.decode else "metadata_only",
+        "visual_verification": "disabled" if not (config.quality.enabled and config.quality.visual.enabled) else ("sampled_decode" if config.quality.visual.decode else "metadata_only"),
+        "video_verification": "sampled_decode" if config.quality.visual.decode else "metadata_only",
         "data_file_selection": selection, "unsuccessful_episodes": unsuccessful,
         "image_resources": sorted(image_resources),
         "peak_input_batch_rows": storage.peak_rows,
@@ -123,41 +128,45 @@ def _full_video_audit(storage, report, plans, config, *, output_check=False, vis
         for eid in item["episode_indices"]:
             record, plan = report["trajectory_quality"][eid], plans[eid]
             checks = record["checks"]
-            check = checks.setdefault("video_integrity", {"rule": "video_integrity", "passed": True,
+            check = checks.setdefault("visual_integrity", {"rule": "visual_integrity", "passed": True,
                 "severity": "info", "message": None, "metrics": {"evaluated": True}})
             check["metrics"].setdefault("full_decode", {})[relative] = {"passed": failure is None, "error": failure}
             if failure is not None:
                 check.update(passed=False, severity="warning", message=failure)
-                policy = config.policy.rules.get("video_integrity", config.policy.default)
+                policy = config.policy.rules.get("visual_integrity", config.policy.default)
                 action = policy.on_fail
-                decision = {"rule": "video_integrity", "action": action, "reason": failure}
+                decision = {"rule": "visual_integrity", "action": action, "reason": failure}
                 quality = record["quality_report"]
                 quality["decisions"].append(decision)
                 if action == "reject_episode":
                     quality["episode_decision"]["keep"] = False
-                    quality["episode_decision"]["reasons"].append("video_integrity")
+                    quality["episode_decision"]["reasons"].append("visual_integrity")
                     if not output_check:
                         plan.reject_episode = True
-                        plan.reasons.append("video_integrity")
+                        plan.reasons.append("visual_integrity")
                 if action == "abort" or (output_check and (action == "reject_episode" or config.policy.output_on_fail == "abort")):
                     quality["abort"] = True
-            record["quality_report"]["checks"]["video_integrity"] = _json_safe(check)
+            record["quality_report"]["checks"]["visual_integrity"] = _json_safe(check)
+            checks["video_integrity"] = {**check, "rule": "video_integrity", "alias_of": "visual_integrity"}
+            record["quality_report"]["checks"]["video_integrity"] = _json_safe(checks["video_integrity"])
             record["transform_plan"] = plan.to_dict()
     report["transform_plans"] = [plan.to_dict() for plan in plans]
     report["quality_policy"] = summarize_policy(report["trajectory_quality"])
     report["video_verification"] = "full_decode" if all("decode_error" not in v for v in report["videos"].values()) else "failed"
 
 
-def audit_pipeline(dataset, config, *, observer=None, video_quality=None, preview_root=None):
+def audit_pipeline(dataset, config, *, observer=None, video_quality=None, preview_root=None, output_check=False):
     root = prepare_dataset(dataset, config)
     with OfficialStorage(root, config) as storage:
         adapter = v3_adapter(root, config, storage=storage)
         config, references = resolve_percentiles(storage, adapter, config)
-        report, plans = _scan(storage, adapter, config, observer)
+        report, plans = _scan(storage, adapter, config, observer, output_check=output_check)
         report["percentile_reference"] = references
         if config.verify_videos:
-            _full_video_audit(storage, report, plans, config, visual=video_quality, preview_root=preview_root)
+            _full_video_audit(storage, report, plans, config, output_check=output_check, visual=video_quality, preview_root=preview_root)
         report["dry_run"] = True
+        report["dataset_quality"] = {"trajectory_quality": report["trajectory_quality"], "quality_policy": report["quality_policy"], "language": report["language"]}
+        report["training_readiness"] = training_report(root, config)
         return report
 
 
@@ -270,6 +279,13 @@ def clean_pipeline(dataset, output, config, *, resume=False, observer_factory=No
                     "writer": "official_v3_rewrite" if changes else "unchanged_copy"}
                 if "dataset_review" in after:
                     result["output_review"] = after["dataset_review"]
+                result["dataset_quality"] = {"trajectory_quality": after["trajectory_quality"], "quality_policy": after["quality_policy"], "language": after["language"]}
+                result["language"] = after["language"]
+                result["language_input"] = before["language"]
+                result["language_output"] = after["language"]
+                result["training_readiness"] = training_report(stage, config)
+                if "dataset" in result["training_readiness"]:
+                    result["training_readiness"]["dataset"] = str(output)
                 report_dir = stage / "cleaning_report"
                 _dump(report_dir / "report.json", result)
                 _dump(report_dir / "transform_plans.json", [p.to_dict() for p in plans])
@@ -287,3 +303,15 @@ def clean_pipeline(dataset, output, config, *, resume=False, observer_factory=No
                     raise ValueError("Output appeared during cleaning; refusing overwrite")
                 stage.rename(output)
                 return result
+
+
+def training_report(dataset, config):
+    """Independent diagnostic: compatibility never rejects or transforms episodes."""
+    if config.training_check is None:
+        return {"status": "not_requested", "runtime_validated": False}
+    from lerobot_cleaner.training.compatibility.lingbot import check_training
+    try:
+        return check_training(dataset, config.training_check, config)
+    except (OSError, ValueError, KeyError, ImportError, RuntimeError) as exc:
+        return {"status": "unavailable", "compatible": None, "runtime_validated": False,
+                "findings": [{"severity": "ERROR", "code": "training_check_unavailable", "message": str(exc)}]}

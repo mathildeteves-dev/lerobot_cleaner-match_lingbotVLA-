@@ -14,6 +14,7 @@ from typing import Any, Optional
 from lerobot_cleaner.adapters.episode import EpisodeRef
 
 from lerobot_cleaner.adapters.base import DatasetAdapter
+from lerobot_cleaner.adapters.resolver import FeatureResolver
 from lerobot_cleaner.adapters.schema import FeatureSchema, FeatureSlice
 
 from lerobot_cleaner.adapters.modality import (
@@ -110,7 +111,7 @@ class LegacyGrootAdapter(DatasetAdapter):
         return self._features("action")
 
     def get_camera_features(self):
-        return tuple(FeatureSchema(key, "video", camera_column=self.resolver.video_original_key(key))
+        return tuple(FeatureResolver().resolve_visual(FeatureSchema(key, "visual", camera_column=self.resolver.video_original_key(key)), self.info["features"])
                      for key in self.resolver.video_keys())
 
     def read_episode(self, episode_id):

@@ -1,12 +1,14 @@
 """Repeated divided differences with midpoint timestamps, in seconds."""
 import numpy as np
+from ..physical import PhysicalDeltaResolver
 
 from ._common import positive_threshold, result, values
 
 
 def derivative_values(trajectory, order, source="state", columns=None):
     arr = values(trajectory, source, columns)
-    metrics = {"evaluated": False}
+    semantics = PhysicalDeltaResolver.metadata(trajectory, source, columns)
+    metrics = {"evaluated": False, **PhysicalDeltaResolver.describe(semantics, order)}
     if len(arr) <= order:
         metrics.update(frames=len(arr), required_frames=order + 1)
         return None, metrics, "insufficient samples for derivative"
@@ -16,12 +18,17 @@ def derivative_values(trajectory, order, source="state", columns=None):
     if not arr.size or not np.isfinite(arr).all():
         return None, metrics, "missing or non-finite values"
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-        for _ in range(order):
-            arr = np.diff(arr, axis=0) / np.diff(t)[:, None]
+        for level in range(order):
+            try:
+                delta = PhysicalDeltaResolver.difference(arr, semantics) if level == 0 else np.diff(arr, axis=0)
+            except ValueError as exc:
+                return None, metrics, str(exc)
+            arr = delta / np.diff(t)[:, None]
             t = (t[1:] + t[:-1]) / 2
     if not np.isfinite(arr).all():
         return None, metrics, "non-finite derivative"
-    return arr, {"evaluated": True}, None
+    metrics["evaluated"] = True
+    return arr, metrics, None
 
 
 def check_derivative(trajectory, order, name, threshold=None, source="state", columns=None):

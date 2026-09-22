@@ -102,14 +102,14 @@ def test_shipped_configs_have_robot_specific_groups():
     root = Path(__file__).resolve().parents[2]
     droid = V3Config.from_yaml(root / "configs/cleaning/droid_v3.yaml")
     expected_droid = [
-        ("state_arm", "state", list(range(7))),
-        ("action_arm", "action", list(range(7))),
-        ("state_gripper", "state", [7]),
-        ("action_gripper", "action", [7]),
+        ("state_arm", "observation.state.arm.position"),
+        ("action_arm", "action.arm.position"),
+        ("state_gripper", "observation.state.effector.position"),
+        ("action_gripper", "action.effector.position"),
     ]
     for config in (droid, V3Config.from_yaml(root / "configs/cleaning/droid_v3_referenced.yaml")):
         assert config.quality.enabled is True
-        assert [(g.name, g.source, g.columns) for g in config.quality.groups] == expected_droid
+        assert [(g.name, g.feature) for g in config.quality.groups] == expected_droid
         assert config.quality.joint_static_ratio is not None
     libero = V3Config.from_yaml(root / "configs/cleaning/libero_v3.yaml")
     assert libero.quality.enabled is True

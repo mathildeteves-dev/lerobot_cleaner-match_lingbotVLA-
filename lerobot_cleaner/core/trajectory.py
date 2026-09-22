@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
+from .physical import PhysicalSemantics
 
 
 def _json_safe(value):
@@ -49,6 +50,8 @@ class TrajectoryView:
     action: np.ndarray
     timestamps: np.ndarray
     fps: float
+    state_semantics: tuple[PhysicalSemantics, ...] = ()
+    action_semantics: tuple[PhysicalSemantics, ...] = ()
 
     def __post_init__(self):
         state = np.array(self.state, dtype=float, copy=True)
@@ -60,6 +63,13 @@ class TrajectoryView:
             raise ValueError("state, action, and timestamps must have equal frame counts")
         if not np.isfinite(self.fps) or self.fps <= 0:
             raise ValueError("fps must be finite and positive")
+        for source, array in (("state", state), ("action", action)):
+            metadata = tuple(getattr(self, source + "_semantics"))
+            if not metadata:
+                metadata = (PhysicalSemantics(),) * array.shape[1]
+            if len(metadata) != array.shape[1] or any(not isinstance(v, PhysicalSemantics) for v in metadata):
+                raise ValueError(f"{source} physical metadata must match array width")
+            object.__setattr__(self, source + "_semantics", metadata)
         for name, value in (("state", state), ("action", action), ("timestamps", timestamps)):
             value.setflags(write=False)
             object.__setattr__(self, name, value)

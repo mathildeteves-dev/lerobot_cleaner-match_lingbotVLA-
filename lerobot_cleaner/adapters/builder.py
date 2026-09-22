@@ -43,7 +43,7 @@ class EpisodeBuilder:
         self.fps = fps
         self.policy = policy or AssemblyPolicy()
 
-    def build(self, frame, *, ref=None, metadata=None):
+    def build(self, frame, *, ref=None, metadata=None, task_catalog=None):
         """Wrap synchronized rows without repairing evidence needed by checks."""
         if len(frame):
             if "episode_index" not in frame or frame.episode_index.isna().any() or frame.episode_index.nunique() != 1:
@@ -61,9 +61,9 @@ class EpisodeBuilder:
             state_features=None if self.schema.raw_vectors else self.schema.states,
             action_features=None if self.schema.raw_vectors else self.schema.actions,
             camera_features=self.schema.cameras, feature_schema=self.schema,
-            assembly_policy=self.policy, metadata=dict(metadata or {}))
+            assembly_policy=self.policy, metadata=dict(metadata or {}), task_catalog=task_catalog)
 
-    def build_streams(self, streams, timeline, *, episode_id, key="timestamp", metadata=None):
+    def build_streams(self, streams, timeline, *, episode_id, key="timestamp", metadata=None, task_catalog=None):
         """Pair source columns on one timeline before feature extraction.
 
         streams maps a source column to a DataFrame containing that column and
@@ -118,6 +118,29 @@ class EpisodeBuilder:
                     values[mask] = source[selected[mask].to_numpy(dtype=int)]
             frame[column] = list(values)
             matched[column] = mask.tolist()
+        # Language samples follow the same reference timeline as numeric streams.
+        # Object dtype preserves integer IDs with missing samples, and exact text.
+        for column in (self.schema.language.index_column, *self.schema.language.text_columns):
+            if column not in streams:
+                continue
+            stream = streams[column]
+            if key not in stream or column not in stream:
+                raise ValueError(f"Stream requires {key} and {column}")
+            if "episode_index" in stream and not stream.episode_index.eq(episode_id).all():
+                raise ValueError("Cannot align language from another episode")
+            source_time = stream[key].to_numpy(dtype=float)
+            self._validate_timeline(source_time)
+            if key == "frame_index" and np.any(source_time != np.floor(source_time)):
+                raise ValueError("frame_index must contain integers")
+            left = pd.DataFrame({key: timeline})
+            right = pd.DataFrame({key: source_time, "sample": np.arange(len(stream))})
+            selected = (left.merge(right, on=key, how="left")["sample"]
+                        if self.policy.alignment == "exact" else
+                        pd.merge_asof(left, right, on=key, direction=self.policy.alignment,
+                                      tolerance=self.policy.tolerance)["sample"])
+            values = stream[column].tolist()
+            frame[column] = pd.Series([values[int(i)] if pd.notna(i) else None for i in selected], dtype=object)
+            matched[column] = selected.notna().tolist()
         if key == "frame_index":
             frame["timestamp"] = timeline / self.fps
         length = max(count, self.policy.pad_to or count)
@@ -132,7 +155,7 @@ class EpisodeBuilder:
             frame = pd.concat([frame, extra], ignore_index=True)
         meta = {**(metadata or {}), "assembly": {"key": key, "matched": matched,
                 "valid_mask": [True] * count + [False] * (length-count), "source_rows": count}}
-        return self.build(frame, metadata=meta)
+        return self.build(frame, metadata=meta, task_catalog=task_catalog)
 
     @staticmethod
     def _validate_timeline(values):

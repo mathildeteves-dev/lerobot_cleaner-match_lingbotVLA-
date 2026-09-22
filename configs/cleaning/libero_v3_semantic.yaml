@@ -1,0 +1,63 @@
+# Semantic alternative; the original libero_v3.yaml remains a legacy-compatible example.
+semantic_adapter: generic
+mapping_config: ../mappings/libero.example.yaml
+# LIBERO-fastwam / lerobot_v30: preserve the original action representation.
+engine: streaming
+data_file_policy: strict
+nonfinite: error
+bounds: {}
+verify_videos: true
+max_frames: 30000000
+batch_rows: 8192
+metadata_batch_rows: 64
+max_episode_frames: 100000
+# Covers every row of this 104280-frame subset; quantiles are exact here.
+quantile_samples: 131072
+disk_reserve_gb: 5
+progress: true
+# Tolerant alias validation lives in --profile; preserve slight float differences.
+aliases: []
+
+# Separate arm/gripper signals; null absolute thresholds measure only.
+# Z-score and static epsilon are tunable heuristics, not verified physical limits.
+quality:
+  enabled: true
+  # Joint stillness: both full state and action transitions must be below epsilon.
+  # Native-unit heuristic tolerances; tune each independently for the dataset.
+  joint_static_ratio:
+    state_epsilon: 0.0001
+    action_epsilon: 0.0001
+    threshold: 0.95
+  groups:
+    - name: state_arm
+      feature: state.arm
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: action_arm
+      feature: action.arm
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: state_gripper
+      feature: state.gripper
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: action_gripper
+      feature: action.gripper
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001

@@ -57,7 +57,18 @@ def estimate_groups(records, quality, settings):
                           excluded_episodes=sum(excluded.values()), exclusion_reasons=dict(excluded))
             metrics[rule] = result
             complete &= result["status"] == "ready"
-        grouped[group.name] = {"source": group.source, "columns": group.columns, "metrics": metrics}
+        requested = [group.feature] if group.feature is not None else group.features
+        observed = [record["groups"][group.name] for record in records
+                    if group.name in record.get("groups", {})]
+        resolutions = [row["resolved"] for row in observed if "resolved" in row]
+        if requested is not None and len(resolutions) != len(observed):
+            raise ValueError(f"Quality group {group.name!r}: canonical features {requested!r} lack recorded resolution")
+        if resolutions and any(value != resolutions[0] for value in resolutions[1:]):
+            raise ValueError(f"Quality group {group.name!r}: canonical features {requested!r} changed layout during calibration")
+        resolved = resolutions[0] if resolutions else None
+        grouped[group.name] = {"source": resolved["source"] if resolved else group.source,
+            "columns": resolved["columns"] if resolved else group.columns,
+            "requested_features": list(requested or []), "resolved": resolved, "metrics": metrics}
     return grouped, bool(complete)
 
 

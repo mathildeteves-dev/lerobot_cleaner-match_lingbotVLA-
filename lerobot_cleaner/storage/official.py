@@ -28,7 +28,7 @@ def open_official_dataset(root):
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
     except ImportError as exc:
         raise RuntimeError(
-            "reader_backend=lerobot requires LeRobot 0.4.2; install '.[lingbot]' "
+            "reader_backend=lerobot requires LeRobot 0.4.2; install '.[lerobot]' "
             "in the target environment. There is no native fallback."
         ) from exc
 
@@ -106,11 +106,9 @@ class OfficialStorage(OfficialReader):
         self.meta = self.dataset.meta
         self.stats = self.meta.stats
         self.tasks = self.meta.tasks
-        task_ids = self.tasks["task_index"].to_numpy()
-        if (len(task_ids) != self.info["total_tasks"] or
-                not np.array_equal(np.sort(task_ids), np.arange(len(task_ids)))):
-            self.close()
-            raise ValueError("Official task indices/count are inconsistent")
+        # Task mapping validity is language evidence, reported by the quality layer.
+        # Loading must not abort before that report can be produced. Writers still
+        # require an unambiguous task mapping when materializing each output frame.
         self._layout = None
         limit = getattr(config, "max_frames", None)
         if limit is not None and not 0 < self.info["total_frames"] <= limit:

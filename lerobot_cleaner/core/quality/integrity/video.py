@@ -1,10 +1,8 @@
-"""Video findings from storage observations; this checker never opens files."""
-from .._common import result
+"""Legacy name for the pure visual integrity checker."""
+from .visual import check_visual
 
 
 def check_video(observations, decoded=False):
-    failures = [row for row in observations if not row["valid"]]
-    return result("video_integrity", not failures, {"evaluated": True,
-        "cameras": observations, "pixel_queries": decoded,
-        "scope": "sampled official decoding" if decoded else "metadata and referenced files"},
-        None if not failures else "invalid video references or decoding")
+    finding = check_visual(observations, decoded)
+    finding.rule = "video_integrity"
+    return finding

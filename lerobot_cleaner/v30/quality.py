@@ -17,7 +17,9 @@ from lerobot_cleaner.core.quality import (
 )
 
 from .adapter import V30Adapter
-from .quality_options import BoundsCheck, TimestampCheck, LengthCheck, GripperCheck, VideoCheck
+from .quality_groups import QualityGroupResolver
+from lerobot_cleaner.adapters.resolver import FeatureResolver
+from .quality_options import LanguageCheck, BoundsCheck, TimestampCheck, LengthCheck, GripperCheck, VisualCheck
 from lerobot_cleaner.core.quality.joint_limits import check_joint_limits
 from lerobot_cleaner.core.quality.zscore import check_zscore
 from lerobot_cleaner.core.quality.percentile import check_percentile
@@ -44,13 +46,42 @@ class QualityThresholds(BaseModel):
 
 class QualityGroup(QualityThresholds):
     name: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
-    source: Literal["state", "action"]
-    columns: list[ColumnIndex] = Field(min_length=1)
+    feature: str | None = Field(None, strict=True, min_length=1)
+    features: list[Annotated[str, Field(strict=True, min_length=1)]] | None = Field(None, min_length=1)
+    source: Literal["state", "action"] | None = None
+    columns: list[ColumnIndex] | None = Field(None, min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def source_reference(cls, data):
+        if isinstance(data, dict) and isinstance(data.get("source"), dict):
+            nested = data["source"]
+            if len(nested) != 1 or next(iter(nested)) not in {"feature", "features"}:
+                raise ValueError(f"Quality group {data.get('name')!r}: source must reference feature or features")
+            if data.get("feature") is not None or data.get("features") is not None:
+                raise ValueError(f"Quality group {data.get('name')!r}: conflicting feature selectors")
+            data = {**data, "source": None, **nested}
+        if isinstance(data, dict) and data.get("features") is not None and not isinstance(data["features"], (list, tuple)):
+            raise ValueError(f"Quality group {data.get('name')!r}: canonical features must be an ordered list")
+        return data
 
     @model_validator(mode="after")
-    def unique_columns(self):
-        if len(set(self.columns)) != len(self.columns):
-            raise ValueError("quality group columns must be unique")
+    def unique_selection(self):
+        prefix = f"Quality group {self.name!r}: "
+        semantic = int(self.feature is not None) + int(self.features is not None)
+        legacy = self.source is not None or self.columns is not None
+        if semantic > 1 or (semantic and legacy):
+            raise ValueError(prefix + "choose feature, features, or legacy source + columns exclusively")
+        if not semantic:
+            if self.source is None or self.columns is None:
+                raise ValueError(prefix + "provide feature/features or both source and columns")
+            if len(set(self.columns)) != len(self.columns):
+                raise ValueError(prefix + "columns must be unique")
+        else:
+            requested = [self.feature] if self.feature is not None else self.features
+            for i, name in enumerate(requested):
+                if not name.strip() or name in requested[:i]:
+                    raise ValueError(prefix + f"canonical feature {name!r} is empty or repeated")
         return self
 
 
@@ -62,11 +93,12 @@ class JointStaticConfig(BaseModel):
 
 
 class TrajectoryQualityConfig(QualityThresholds):
+    language: LanguageCheck = Field(default_factory=LanguageCheck)
     timestamp: TimestampCheck = Field(default_factory=TimestampCheck)
     episode_structure: bool = True
     episode_length: LengthCheck = Field(default_factory=LengthCheck)
     gripper: GripperCheck | None = None
-    video: VideoCheck = Field(default_factory=VideoCheck)
+    visual: VisualCheck = Field(default_factory=VisualCheck)
     joint_static_ratio: JointStaticConfig | None = None
     enabled: bool = True
     state_column: str = "observation.state"
@@ -75,6 +107,20 @@ class TrajectoryQualityConfig(QualityThresholds):
     # Legacy single-source configuration, used only when groups is absent.
     source: Literal["state", "action"] = "state"
     columns: list[ColumnIndex] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def visual_alias(cls, data):
+        if isinstance(data, dict) and "video" in data:
+            if "visual" in data:
+                raise ValueError("Use quality.visual or legacy quality.video, not both")
+            data = dict(data)
+            data["visual"] = data.pop("video")
+        return data
+
+    @property
+    def video(self):
+        return self.visual
 
     @model_validator(mode="after")
     def validate_groups(self):
@@ -115,9 +161,23 @@ def _checks(view, settings, source, columns):
     return {value.rule: value.to_dict() for value in results}
 
 
-def audit_trajectory(frame, fps, config, *, adapter=None, metadata=None):
-    view = (adapter.from_frame(frame).to_trajectory() if adapter is not None else
-            V30Adapter.to_trajectory(frame, fps, config.state_column, config.action_column))
+def audit_trajectory(frame, fps, config, *, adapter=None, metadata=None, schema=None):
+    if adapter is not None:
+        if schema is not None:
+            raise ValueError("Pass adapter or schema, not both")
+        episode = adapter.from_frame(frame)
+        schema = episode.feature_schema
+        view = episode.to_trajectory()
+    elif schema is not None:
+        from lerobot_cleaner.adapters.builder import EpisodeBuilder
+        view = EpisodeBuilder(schema, fps).build(frame, metadata=metadata).to_trajectory()
+    else:
+        view = V30Adapter.to_trajectory(frame, fps, config.state_column, config.action_column)
+    schema = schema or FeatureResolver.default_schema(view.state.shape[1], view.action.shape[1],
+                                                      config.state_column, config.action_column)
+    selections = ([QualityGroupResolver().resolve(group, schema,
+                  {"state": view.state.shape[1], "action": view.action.shape[1]}) for group in config.groups]
+                  if config.groups is not None else [])
     record = {"episode_index": int(frame.episode_index.iloc[0]),
               "checks": {"finite": check_finite(view).to_dict()}}
     if config.timestamp.enabled:
@@ -145,24 +205,26 @@ def audit_trajectory(frame, fps, config, *, adapter=None, metadata=None):
         record["checks"].update(_checks(view, config, config.source, columns))
         record["mode"] = "legacy_single_source"
         return record
-    # Validate every group before evaluation, so a typo cannot silently omit action.
-    for group in config.groups:
-        width = getattr(view, group.source).shape[1]
-        if any(index >= width for index in group.columns):
-            raise ValueError(f"quality.groups[{group.name}] columns {group.columns} exceed {group.source} width {width}")
     record["mode"] = "groups"
     record["groups"] = {}
-    for group in config.groups:
-        selected = getattr(view, group.source)[:, group.columns]
+    for group, selection in zip(config.groups, selections):
+        resolved = selection["resolved"]
+        source, columns = resolved["source"], resolved["columns"]
+        selected = getattr(view, source)[:, columns]
         empty = np.empty((len(selected), 0))
-        group_view = TrajectoryView(selected if group.source == "state" else empty,
-                                    selected if group.source == "action" else empty,
-                                    view.timestamps, view.fps)
+        group_view = TrajectoryView(selected if source == "state" else empty,
+                                    selected if source == "action" else empty,
+                                    view.timestamps, view.fps,
+                                    tuple(view.state_semantics[i] for i in columns) if source == "state" else (),
+                                    tuple(view.action_semantics[i] for i in columns) if source == "action" else ())
         checks = {"finite": check_finite(group_view).to_dict()}
-        checks.update(_checks(group_view, group, group.source, None))
+        try:
+            checks.update(_checks(group_view, group, source, None))
+        except ValueError as exc:
+            raise ValueError(f"Quality group {group.name!r}, canonical features {selection['requested_features']!r}: {exc}") from exc
         record["groups"][group.name] = {
-            "source": group.source, "columns": group.columns,
-            "thresholds": group.model_dump(exclude={"name", "source", "columns"}),
+            **selection, "source": source, "columns": columns,
+            "thresholds": group.model_dump(exclude={"name", "source", "columns", "feature", "features"}),
             "checks": checks,
         }
     return record

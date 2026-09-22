@@ -1,0 +1,33 @@
+# Merge training_check into your actual cleaning config. Paths are relative to this YAML.
+reader_backend: lerobot
+engine: streaming
+max_frames: 30000000
+training_check:
+  target: lingbot
+  robot_config: ../robot_configs/droid_franka.yaml
+  train_config: ../vla/droid_franka.yaml
+  # official_train: audited upstream train entry uses VLADataset default H=50.
+  # explicit_dataset: caller explicitly forwards train.chunk_size (cleaner smoke).
+  entrypoint: official_train
+  padding_warning_ratio: null   # diagnostic only; never reject episodes
+  include_padding_by_timestep: false
+  decode_cameras: false        # true checks sampled pixels using the official decoder
+  camera_sample_stride: 30      # 1 checks each timestep; decoding can be expensive
+  tokenization:
+    enabled: false             # true runs the real processor.tokenizer on every unique task
+    tokenizer_path: null       # defaults to training YAML model.tokenizer_path; local cache only
+
+quality:
+  language:
+    enabled: true
+    allow_instruction_changes: false
+    min_length: 2
+    max_length: 4096
+    check_control_characters: true
+    check_numeric: true
+    placeholders: ["n/a", "unknown", "task"]
+# Only integrity errors reach policy. Repetition and heuristics remain report-only.
+policy:
+  rules:
+    language_integrity:
+      on_fail: warn

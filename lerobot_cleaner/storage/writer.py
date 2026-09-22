@@ -1,33 +1,16 @@
 """Dataset writer for structural mutations, using official LeRobot v3 writing."""
 from copy import deepcopy
-from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 
 from lerobot_cleaner.transforms.vision.roi_crop import crop_image
+from lerobot_cleaner.core.language import valid_index, text_error
 
 IDENTITY = {"index", "frame_index", "episode_index", "timestamp", "task_index"}
 
 
-def image_array(value, root):
-    from PIL import Image
-    if isinstance(value, dict):
-        if value.get("bytes") is not None:
-            with Image.open(BytesIO(value["bytes"])) as image:
-                return np.array(image)
-        elif value.get("path") is not None:
-            path = Path(value["path"])
-            path = path if path.is_absolute() else root / path
-            if not path.resolve().is_relative_to(root.resolve()):
-                raise ValueError("Image reference escapes source dataset")
-            with Image.open(path) as image:
-                return np.array(image)
-        else:
-            raise ValueError("Image storage cell has no bytes or path")
-    if hasattr(value, "convert"):
-        value = np.asarray(value)
-    return np.asarray(value)
+from .images import image_array
 
 
 class V3DatasetWriter:
@@ -65,12 +48,14 @@ class V3DatasetWriter:
         self.finalized = False
 
     def _task(self, task_index):
+        if not valid_index(task_index):
+            raise ValueError("Official writer requires an integer task index; no implicit repair")
         tasks = self.storage.tasks
         matches = tasks[tasks["task_index"] == task_index]
-        if len(matches) != 1:
+        if len(matches) != 1 or not valid_index(matches["task_index"].iloc[0]):
             raise ValueError("Unresolved source task")
         value = matches["task"].iloc[0] if "task" in matches else matches.index[0]
-        if not isinstance(value, str) or not value.strip():
+        if text_error(value):
             raise ValueError("Official writer requires nonempty task text")
         return value
 
@@ -97,7 +82,7 @@ class V3DatasetWriter:
                 video[key] = arrays
             for position in range(start, stop):
                 row = episode.df.iloc[position]
-                output = {"task": self._task(int(row.task_index))}
+                output = {"task": self._task(episode.df["task_index"].iloc[position])}
                 for key, spec in self.features.items():
                     if spec["dtype"] == "video":
                         pixels = np.moveaxis(video[key][position-start], 0, -1)
@@ -114,6 +99,8 @@ class V3DatasetWriter:
                         value = np.asarray(row[key], dtype=spec["dtype"]).reshape(tuple(spec["shape"]))
                         if np.issubdtype(value.dtype, np.number) and not np.isfinite(value).all():
                             raise ValueError(f"Refusing to publish nonfinite output: {key}")
+                    if key == "task" and (not isinstance(value, str) or value != output["task"]):
+                        raise ValueError("Sample task conflicts with the canonical task table; no implicit rewrite")
                     output[key] = value
                 self.dataset.add_frame(output)
         self.dataset.save_episode()

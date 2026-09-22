@@ -71,6 +71,8 @@ def smoke_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "check_readiness", lambda *a: {"source_available": True, "missing_dependencies": []})
     monkeypatch.setattr(runner, "clean_v3", lambda *a: None)
     monkeypatch.setattr(runner, "validate_mapping", lambda *a: None)
+    from lerobot_cleaner.training.compatibility import lingbot as compatibility
+    monkeypatch.setattr(compatibility, "check_training", lambda *a: {"compatible": True, "status": "static_compatible"})
     monkeypatch.setattr(runner, "sys", SimpleNamespace(version="3.12.3", version_info=(3, 12, 3), executable="python"))
     monkeypatch.setattr(runner, "os", SimpleNamespace(name="posix", environ={}))
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
@@ -309,3 +311,13 @@ def test_python_minor_gate_and_patch_warning(smoke_contract, monkeypatch, versio
         import json
         saved = json.loads((args[1] / "smoke_report.json").read_text(encoding="utf-8"))
         assert saved["warnings"] == result["warnings"]
+
+
+def test_smoke_stops_before_preprocessing_on_contract_error(smoke_contract, monkeypatch):
+    from lerobot_cleaner.training.compatibility import lingbot as compatibility
+    monkeypatch.setattr(compatibility, "check_training", lambda *a: {"compatible": False, "status": "incompatible"})
+    args, _, commands = smoke_contract
+    report = runner.smoke(*args, level=2)
+    assert report["status"] == "failed"
+    assert report["training_readiness"]["status"] == "incompatible"
+    assert not commands

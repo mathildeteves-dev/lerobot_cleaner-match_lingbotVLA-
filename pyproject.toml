@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lerobot_cleaner"
 version = "0.1.0"
-description = "GR00T v2.1 cleaning and conservative LeRobot v3.0 cleaning with LingBot mappings"
+description = "LeRobot dataset quality and cleaning with generic, GR00T and LingBot feature mappings"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -34,6 +34,10 @@ viz = ["matplotlib>=3.7"]
 video = ["opencv-python>=4.8"]
 v3-video = ["av>=14", "Pillow>=9"]
 dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.4"]
+lerobot = [
+    "lerobot @ https://github.com/huggingface/lerobot/archive/refs/tags/v0.4.2.tar.gz"
+]
+# Compatibility alias; the official loader is also usable without LingBot mappings.
 lingbot = [
     "lerobot @ https://github.com/huggingface/lerobot/archive/refs/tags/v0.4.2.tar.gz"
 ]

@@ -1,5 +1,18 @@
 # lerobot-cleaner
 
+## Training Contract Check
+
+新增独立的训练兼容性入口，区分数据质量与特定 LingBot 配置是否兼容：
+
+```bash
+lerobot-cleaner check-training /path/to/clean_dataset --robot-config configs/robot_configs/droid_franka.yaml --train-config configs/vla/droid_franka.yaml
+```
+
+可在清洗配置中加入 `training_check`，写出后生成独立 `training_readiness` 报告。
+统计 action chunk、任务文本、相机、维度 padding 和 masks；不会因此删帧或删集。
+静态兼容不等于实际训练已验证；`--smoke` 可显式执行真实 preprocessing + collator，不加载模型权重。
+详见 [Training Contract 说明](docs/TRAINING_CONTRACT_ZH.md)。
+
 ## 当前统一架构
 
 Storage（官方 LeRobotDataset）→ Semantic Adapter（LingBot / LeRobot / GR00T）→
@@ -381,3 +394,17 @@ Trajectory quality supports explicit `quality.groups` with separate source, colu
 `calibrate-v3 DATASET --config configs/cleaning/droid_v3.yaml --output CALIBRATION_DIR` performs a read-only, per-group Quantile + MAD calibration and writes `calibration_report.json`, `audit.json`, and a full `thresholds.yaml` config. Add `--clean-output CLEAN_DIR` to automatically run the second cleaning pass governed by the configured policy and transform plan. Statistics use equally weighted **episode peaks**, not pooled transition values. See the [calibration guide](docs/TRAJECTORY_QUALITY_AND_SMOKE_ZH.md) for exclusions, sample requirements and scope.
 
 Dataset semantics now use `LingBotAdapter` / `LeRobotAdapter` / `GrootAdapter` → `FeatureResolver` → `CanonicalFeatureSchema` (`FeatureSchema` + `FeatureSlice`) → `EpisodeBuilder` → `UnifiedEpisode` → `TrajectoryView` → quality evaluation. EpisodeBuilder provides explicit timestamp/frame alignment, action-state pairing, missing-value policies and masked padding for asynchronous numeric streams. GR00T retains its modality contract; native v3 and LingBot do not require `modality.json`. DROID cleaning configs select the LingBot adapter through `robot_config`. See [adapter architecture and mapping semantics](docs/DATASET_ADAPTERS_ZH.md).
+
+### Language / Task Integrity
+
+Canonical schema includes language evidence with episode/sample associations. V3 audits and cleaned-output reports expose `dataset_quality.language`; default checks are read-only. LingBot tokenizer diagnostics are optional under `training_check.tokenization` and remain separate from generic quality. See [语言检查与分词兼容性](docs/LANGUAGE_TASK_INTEGRITY_ZH.md).
+
+通用多源 LeRobot 映射使用 `GenericMappingAdapter` 与 `mapping_config`，无需 LingBot YAML，参见 [配置与架构说明](docs/GENERIC_MAPPING_ZH.md)。
+
+Quality groups 优先使用 canonical `feature` / `features`，保留旧 `source + columns`，见 [语义 group 配置](docs/SEMANTIC_QUALITY_GROUPS_ZH.md)。
+
+相机 image/video 统一语义、读取与质量配置见 [Canonical visual feature](docs/VISUAL_FEATURES_ZH.md)。
+
+物理语义字段、周期差分与兼容行为见 [Physical semantics](docs/PHYSICAL_SEMANTICS_ZH.md)。
+
+训练准备 bundle（官方 norm、Level 2 smoke、manifest）见 [LingBot bundle](docs/LINGBOT_BUNDLE_ZH.md)。

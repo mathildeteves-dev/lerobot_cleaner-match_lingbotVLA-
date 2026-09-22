@@ -6,8 +6,7 @@ from lerobot_cleaner.adapters.schema import FeatureSlice, vector_values
 from lerobot_cleaner.core.plans import EpisodeDecision, NumericEdit, QualityReport, TransformPlan
 from lerobot_cleaner.core.quality._common import result
 from lerobot_cleaner.core.quality.motion.static_edges import check_static_edges
-from lerobot_cleaner.core.quality.integrity.video import check_video
-from lerobot_cleaner.core.quality.vision.blur import blur_variance, check_blur
+from .visual import visual_findings
 from .quality import audit_trajectory
 
 from lerobot_cleaner.adapters.episode_access import IDENTITY_COLUMNS, sensor_values, episode_identity
@@ -53,49 +52,17 @@ def numeric_edits(adapter, target, operation, parameters):
 
 
 def video_findings(storage, episode, options):
-    observations, variances = [], []
-    for ref in storage.video_references(episode.episode_index):
-        path, key = ref["path"], ref["key"]
-        valid = (path.is_file() and path.stat().st_size > 0
-                 and np.isfinite([ref["start"], ref["end"]]).all()
-                 and ref["start"] >= 0 and np.isclose(ref["end"]-ref["start"], len(episode.df)/storage.info["fps"], atol=1e-3))
-        item = {"key": key, "valid": bool(valid), "sampled_frames": 0}
-        if valid and options.decode:
-            positions = np.arange(0, len(episode.df), options.sample_stride)
-            try:
-                for start in range(0, len(positions), options.batch_frames):
-                    ids = positions[start:start+options.batch_frames]
-                    times = episode.df.timestamp.to_numpy()[ids]
-                    batch = storage.video_frames(episode.episode_index, key, times)
-                    arrays = batch.detach().cpu().numpy() if hasattr(batch, "detach") else np.asarray(batch)
-                    if len(arrays) != len(ids):
-                        raise ValueError("Official decoder did not return each requested sample")
-                    for pixels in arrays:
-                        if pixels.ndim != 3 or pixels.shape[0] not in {1, 3, 4}:
-                            raise ValueError("Expected official CHW image tensor")
-                        rgb = np.moveaxis(pixels, 0, -1)
-                        if not np.isfinite(rgb).all():
-                            raise ValueError("Nonfinite decoded image")
-                        if np.issubdtype(rgb.dtype, np.floating):
-                            rgb = rgb * 255.
-                        variances.append(blur_variance(rgb))
-                        item["sampled_frames"] += 1
-            except (OSError, ValueError, RuntimeError, AssertionError) as exc:
-                item.update(valid=False, error=str(exc))
-        observations.append(item)
-    findings = {"video_integrity": check_video(observations, options.decode).to_dict()}
-    if options.blur_variance is not None:
-        finding = check_blur(variances, options.blur_variance, options.max_blur_ratio)
-        if any(not row["valid"] for row in observations):
-            finding.passed = False
-            finding.metrics["evaluated"] = False
-            finding.message = "Incomplete video decoding; blur result is unavailable"
-        findings["blur"] = finding.to_dict()
-    return findings
+    """Compatibility entry point; both image and video now use canonical visuals."""
+    from lerobot_cleaner.adapters.resolver import FeatureResolver
+    from lerobot_cleaner.adapters.schema import FeatureSchema
+    features = (episode.feature_schema.visual if episode.feature_schema is not None else
+                tuple(FeatureResolver().resolve_visual(FeatureSchema(key, "visual", camera_column=key), storage.info["features"])
+                      for key, spec in storage.info["features"].items() if spec.get("dtype") in {"image", "video"}))
+    return visual_findings(storage, episode, options, features)
 
 
 def findings(record):
-    yield from record["checks"].items()
+    yield from ((key, check) for key, check in record["checks"].items() if not check.get("alias_of"))
     for group, details in record.get("groups", {}).items():
         for rule, check in details["checks"].items():
             yield f"groups/{group}/{rule}", check
@@ -108,6 +75,10 @@ def build_plan(episode, adapter, config, *, output_check=False):
     record = (audit_trajectory(frame, episode.fps, config.quality, adapter=adapter,
                               metadata=episode.metadata) if config.quality.enabled else
               {"episode_index": eid, "checks": {}, "mode": "disabled"})
+    if config.quality.enabled and config.quality.language.enabled:
+        from lerobot_cleaner.core.quality.integrity.language import check_language
+        record["checks"]["language_integrity"] = check_language(
+            episode.language, **config.quality.language.model_dump(exclude={"enabled"}))
     plan = TransformPlan(eid, len(frame), episode_identity(episode))
     mutations = config.transforms
     # Find bad values across all declared numeric sensor columns, not just state/action.
@@ -127,8 +98,8 @@ def build_plan(episode, adapter, config, *, output_check=False):
     finite["passed"] = finite["passed"] and not bad_columns
     finite["metrics"].update(evaluated=True, bad_source_frames=np.flatnonzero(bad_rows).tolist(),
                              nonfinite_columns=bad_columns)
-    if config.quality.enabled and config.quality.video.enabled:
-        record["checks"].update(video_findings(adapter.storage, episode, config.quality.video))
+    if config.quality.enabled and config.quality.visual.enabled:
+        record["checks"].update(visual_findings(adapter.storage, episode, config.quality.visual, adapter.get_visual_features()))
     static = mutations.static_trim
     if static.enabled:
         view = episode.to_trajectory()
@@ -157,6 +128,8 @@ def build_plan(episode, adapter, config, *, output_check=False):
         cameras = {f.name: f.camera_column for f in adapter.get_camera_features()}
         for target, crop in mutations.crop.items():
             column = cameras.get(target, target)
+            if column is None:
+                raise ValueError(f"ROI target {target!r} is a derived image; select a physical source camera for dataset cropping")
             spec = adapter.info["features"].get(column, {})
             if spec.get("dtype") not in {"video", "image"}:
                 raise ValueError(f"ROI target is not an image/video: {target}")

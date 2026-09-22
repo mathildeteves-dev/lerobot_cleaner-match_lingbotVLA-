@@ -1,0 +1,14 @@
+# Targets and sources retain their declared order. Slice bounds are strict.
+canonical:
+  state:
+    arm:
+      - source: observation.joint_position
+        start: 0
+        end: 7
+    gripper:
+      - source: observation.gripper
+  action:
+    arm:
+      - source: action.arm
+    gripper:
+      - source: action.gripper

@@ -1,5 +1,6 @@
 """Joint state/action stillness on the same consecutive transitions."""
 import numpy as np
+from ..physical import PhysicalDeltaResolver
 
 from ._common import result
 
@@ -23,9 +24,14 @@ def check_joint_static_ratio(trajectory, state_epsilon, action_epsilon, threshol
         return result("joint_static_ratio", False, metrics, "insufficient state/action trajectory")
     if not np.isfinite(state).all() or not np.isfinite(action).all():
         return result("joint_static_ratio", False, metrics, "non-finite state/action trajectory")
+    try:
+        state_steps = PhysicalDeltaResolver.trajectory_difference(trajectory, "state")
+        action_steps = PhysicalDeltaResolver.trajectory_difference(trajectory, "action")
+    except ValueError as exc:
+        return result("joint_static_ratio", False, metrics, str(exc))
     with np.errstate(over="ignore", invalid="ignore"):
-        state_delta = np.max(np.abs(np.diff(state, axis=0)), axis=1)
-        action_delta = np.max(np.abs(np.diff(action, axis=0)), axis=1)
+        state_delta = np.max(np.abs(state_steps), axis=1)
+        action_delta = np.max(np.abs(action_steps), axis=1)
     if not np.isfinite(state_delta).all() or not np.isfinite(action_delta).all():
         return result("joint_static_ratio", False, metrics, "non-finite trajectory differences")
     state_static = state_delta < state_epsilon

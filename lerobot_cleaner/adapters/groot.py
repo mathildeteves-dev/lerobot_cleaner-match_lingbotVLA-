@@ -1,8 +1,10 @@
 """GR00T feature semantics over officially loaded (possibly converted) v3 data."""
 import json
+from lerobot_cleaner.core.physical import PHYSICAL_FIELDS
 from pathlib import Path
 
 from .lerobot_v3 import LeRobotAdapter
+from .resolver import FeatureResolver
 from .schema import FeatureSchema, FeatureSlice
 from .modality import (
     ModalityResolver, ModalitySlice, ACTION_COL, STATE_COL, META_DIR, INFO_FILE,
@@ -35,7 +37,8 @@ class GrootAdapter(LeRobotAdapter):
                     or len(spec["shape"]) != 1 or not 0 <= start < end <= spec["shape"][0]):
                 raise ValueError(f"Invalid GR00T slice: {modality}.{key}")
             features.append(FeatureSchema(f"{modality}.{key}", modality,
-                                         (FeatureSlice(column, start, end),)))
+                                         (FeatureSlice(column, start, end),),
+                                         **{key: block[key] for key in PHYSICAL_FIELDS if key in block}))
         return tuple(features)
 
     def get_state_features(self):
@@ -48,7 +51,8 @@ class GrootAdapter(LeRobotAdapter):
         features = []
         for key in self.resolver.video_keys():
             column = self.resolver.video_original_key(key)
-            if self.info["features"].get(column, {}).get("dtype") != "video":
-                raise ValueError(f"Missing GR00T video source: {column}")
-            features.append(FeatureSchema(key, "video", camera_column=column))
+            if self.info["features"].get(column, {}).get("dtype") not in {"video", "image"}:
+                raise ValueError(f"Missing GR00T visual source: {column}")
+            features.append(FeatureResolver().resolve_visual(
+                FeatureSchema(key, "visual", camera_column=column), self.info["features"]))
         return tuple(features)

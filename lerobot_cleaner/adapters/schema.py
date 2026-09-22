@@ -1,5 +1,7 @@
 """Canonical, storage-independent feature declarations."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from lerobot_cleaner.core.physical import PhysicalSemantics
+from lerobot_cleaner.core.language import LanguageFeature
 
 import numpy as np
 
@@ -34,29 +36,70 @@ class FeatureSlice:
 
 
 @dataclass(frozen=True)
-class FeatureSchema:
+class FeatureSchema(PhysicalSemantics):
     name: str
     modality: str
+    # Numeric last-axis slices; for derived cameras, slices address CHW width.
     slices: tuple[FeatureSlice, ...] = ()
     camera_column: str | None = None
     subtract_state: bool = False  # Training recipe metadata; never applied implicitly.
+
+    convert_from_state: bool = False  # LingBot marker; source is always resolved in slices.
+
+    source_dimensions: tuple[int | None, ...] = ()
 
     @property
     def width(self):
         return sum(part.end - part.start for part in self.slices)
 
     def extract(self, frame):
-        arrays = []
-        for part in self.slices:
-            if part.column not in frame:
-                raise ValueError(f"Missing feature column: {part.column}")
-            values = vector_values(frame[part.column], part.end)
-            if values.ndim == 1:
-                values = values[:, None]
-            if values.ndim != 2 or not 0 <= part.start < part.end <= values.shape[1]:
-                raise ValueError(f"Invalid slice for {self.name}: {part}")
-            arrays.append(values[:, part.start:part.end])
-        return np.concatenate(arrays, axis=1) if arrays else np.empty((len(frame), 0))
+        from .resolver import FeatureResolver
+        return FeatureResolver.extract(self, frame)
+
+
+@dataclass(frozen=True)
+class VisualSource:
+    source_key: str
+    storage_dtype: str
+    shape: tuple[int, int, int]  # Normalized HWC, independent of storage layout.
+    start: int | None = None
+    end: int | None = None
+    layout: str = "HWC"
+
+
+@dataclass(frozen=True)
+class VisualFeatureSchema:
+    feature_name: str
+    canonical_path: str
+    storage_dtype: str
+    source_key: str | None
+    shape: tuple[int, int, int]
+    sources: tuple[VisualSource, ...]
+    semantic_modality: str = field(default="visual", init=False)
+
+    @property
+    def name(self):
+        return self.feature_name
+
+    @property
+    def modality(self):
+        return self.semantic_modality
+
+    @property
+    def camera_column(self):
+        return self.source_key
+
+    @property
+    def slices(self):
+        return tuple(FeatureSlice(s.source_key, s.start, s.end)
+                     for s in self.sources if s.start is not None)
+
+    @property
+    def width(self):
+        return sum(part.end - part.start for part in self.slices)
+
+
+VisualFeature = VisualFeatureSchema
 
 
 # Compatibility for callers of the original adapter API.
@@ -67,8 +110,14 @@ Feature = FeatureSchema
 class CanonicalFeatureSchema:
     states: tuple[FeatureSchema, ...] = ()
     actions: tuple[FeatureSchema, ...] = ()
-    cameras: tuple[FeatureSchema, ...] = ()
+    cameras: tuple[VisualFeatureSchema, ...] = ()
     # GR00T rules address raw indices, including unnamed vector dimensions.
     raw_vectors: bool = False
     state_column: str = "observation.state"
     action_column: str = "action"
+    language: LanguageFeature = field(default_factory=LanguageFeature)
+
+    @property
+    def visual(self):
+        """Semantic API; cameras remains the positional/keyword compatibility field."""
+        return self.cameras

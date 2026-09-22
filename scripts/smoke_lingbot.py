@@ -73,6 +73,13 @@ def smoke(dataset, output, lingbot_root, profile_path, robot_config, train_confi
         clean_v3(dataset, clean, config)
         report["stages"].append({"stage": "clean-v3", "status": "passed"})
         validate_mapping(clean, robot_config, train_config)
+        from lerobot_cleaner.training.config import TrainingCheckConfig
+        from lerobot_cleaner.training.compatibility.lingbot import check_training
+        report["training_readiness"] = check_training(clean, TrainingCheckConfig(
+            robot_config=robot_config, train_config=train_config, entrypoint="explicit_dataset"), config)
+        if not report["training_readiness"]["compatible"]:
+            raise ValueError("Clean dataset does not meet this LingBot training contract")
+        report["stages"].append({"stage": "training_contract", "status": "passed"})
         report["stages"].append({"stage": "validate-lingbot", "status": "passed"})
         subprocess.run([sys.executable, "-m", "scripts.run_lingbot_norm",
             "--dataset", str(clean), "--lingbot-root", str(lingbot_root),

@@ -11,6 +11,7 @@
 
 | 文件 | 用途 |
 | --- | --- |
+| `training_contract.example.yaml` | 独立 LingBot training contract、padding 与训练兼容性诊断 |
 | `v3_quality_policy.example.yaml` | 新版质量规则、判断策略和显式变换的完整示例 |
 | `droid_v3.yaml` | DROID 数据默认清洗配置：分批 streaming 引擎、保守策略（不删帧、非有限值报错） |
 | `droid_v3_referenced.yaml` | 保留旧文件名，现已改为官方 strict 读取；残留分片须先单独修复，不再自动排除 |
@@ -48,3 +49,7 @@ review 层（`dataset/episode_review.py` + `review_profile.py`）使用的数据
 
 项目根的 `presets/` 属于 GR00T v2.1 时代（`run` 命令的 R1Pro 清洗预设），
 与 v3 流程无关，保留用于旧格式数据。
+
+通用 LeRobot feature mapping 示例见 [mappings/generic.example.yaml](mappings/generic.example.yaml)，在清洗配置中设置 `semantic_adapter: generic` 和 `mapping_config`。
+
+Quality groups 推荐 `feature` / `features`。DROID 配置已迁移；LIBERO 新增 [语义配置](cleaning/libero_v3_semantic.yaml) 与 [布局 mapping](mappings/libero.example.yaml)，原配置保持兼容。详见 [说明](../docs/SEMANTIC_QUALITY_GROUPS_ZH.md)。

@@ -351,5 +351,91 @@ def generate_lingbot_config(
     console.print_json(json.dumps(result))
 
 
+
+
+@app.command("check-training")
+def check_training_command(
+    dataset: Path = typer.Argument(..., exists=True, file_okay=False),
+    target: str = typer.Option("lingbot", "--target"),
+    robot_config: Path = typer.Option(..., "--robot-config", exists=True),
+    train_config: Path = typer.Option(..., "--train-config", exists=True),
+    config: Optional[Path] = typer.Option(None, "--config", exists=True, help="Official loader / v2.1 conversion config"),
+    output: Optional[Path] = typer.Option(None, "--output", help="New report JSON outside the dataset"),
+    entrypoint: str = typer.Option("official_train", "--entrypoint"),
+    padding_warning_ratio: Optional[float] = typer.Option(None, "--padding-warning-ratio", min=0, max=1),
+    decode_cameras: bool = typer.Option(False, "--decode-cameras"),
+    camera_sample_stride: int = typer.Option(30, "--camera-sample-stride", min=1),
+    padding_by_timestep: bool = typer.Option(False, "--padding-by-timestep"),
+    tokenize: bool = typer.Option(False, "--tokenize", help="Check all distinct tasks with the real local tokenizer"),
+    tokenizer_path: Optional[str] = typer.Option(None, "--tokenizer-path", help="Local processor directory or cached model ID"),
+    smoke: bool = typer.Option(False, "--smoke", help="Real preprocessing/collator, no model weights"),
+    lingbot_root: Optional[Path] = typer.Option(None, "--lingbot-root", exists=True),
+    norm_stats: Optional[Path] = typer.Option(None, "--norm-stats", exists=True),
+):
+    """Diagnose model-specific readiness separately from dataset quality."""
+    from lerobot_cleaner.training.config import TrainingCheckConfig
+    from lerobot_cleaner.training.compatibility.lingbot import check_training
+    from lerobot_cleaner.v30.v3 import V3Config
+    try:
+        if output and (output.exists() or output.resolve().is_relative_to(dataset.resolve())):
+            raise ValueError("Report must be new and outside source dataset")
+        if tokenizer_path and not tokenize:
+            raise ValueError("--tokenizer-path requires --tokenize")
+        if smoke and (lingbot_root is None or norm_stats is None):
+            raise ValueError("--smoke requires --lingbot-root and --norm-stats")
+        options = TrainingCheckConfig(target=target, robot_config=robot_config.resolve(), train_config=train_config.resolve(),
+            entrypoint=entrypoint, padding_warning_ratio=padding_warning_ratio, decode_cameras=decode_cameras,
+            camera_sample_stride=camera_sample_stride, include_padding_by_timestep=padding_by_timestep,
+            tokenization={"enabled": tokenize, "tokenizer_path": tokenizer_path})
+        loader_config = V3Config.from_yaml(config)
+        if output and loader_config.converted_root and output.resolve().is_relative_to(loader_config.converted_root):
+            raise ValueError("Report must be outside the converted source dataset")
+        readiness = check_training(dataset, options, loader_config)
+        if smoke:
+            from lerobot_cleaner.training.smoke.lingbot import smoke_preprocessing
+            readiness["smoke"] = smoke_preprocessing(Path(readiness.get("dataset", dataset)), options, readiness, lingbot_root, norm_stats)
+            readiness["runtime_validated"] = readiness["smoke"]["status"] == "passed"
+            readiness["training_ready"] = readiness["runtime_validated"]
+        report = {"dataset_quality": {"status": "not_evaluated", "note": "Use audit-v3 for independent quality checks"},
+                  "training_readiness": readiness}
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with output.open("x", encoding="utf-8") as handle:
+                json.dump(report, handle, ensure_ascii=False, indent=2, allow_nan=False)
+        console.print_json(json.dumps(report, ensure_ascii=False, allow_nan=False))
+    except (ValueError, OSError, KeyError, ImportError, RuntimeError) as exc:
+        console.print(f"Training compatibility check failed: {exc}", markup=False)
+        raise typer.Exit(code=1) from exc
+    if not readiness.get("compatible") or (smoke and not readiness["runtime_validated"]):
+        raise typer.Exit(code=2)
+
+
+@app.command("export-lingbot-bundle")
+def export_lingbot_bundle(
+    dataset: Path = typer.Option(..., "--dataset", exists=True, file_okay=False),
+    output: Path = typer.Option(..., "--output"),
+    lingbot_root: Path = typer.Option(..., "--lingbot-root", exists=True, file_okay=False),
+    train_config: Path = typer.Option(..., "--train-config", exists=True, dir_okay=False),
+    robot_config: Optional[Path] = typer.Option(None, "--robot-config", exists=True, dir_okay=False),
+    config: Optional[Path] = typer.Option(None, "--config", "-c", exists=True),
+    skip_clean: bool = typer.Option(False, "--skip-clean"),
+    skip_smoke: bool = typer.Option(False, "--skip-smoke", help="Export unverified artifacts; never marks training-ready"),
+    cuda_device: str = typer.Option("0", "--cuda-device"),
+):
+    """Clean, validate, run official normalization and Level 2 smoke, then export a bundle."""
+    from lerobot_cleaner.v30.lingbot.bundle import LingBotBundleExporter
+    from lerobot_cleaner.v30.v3 import V3Config
+    try:
+        result = LingBotBundleExporter().export(dataset, output, lingbot_root=lingbot_root,
+            train_config=train_config, robot_config=robot_config, config=V3Config.from_yaml(config),
+            skip_clean=skip_clean, skip_smoke=skip_smoke, cuda_device=cuda_device)
+        console.print_json(json.dumps(result, ensure_ascii=False))
+    except Exception as exc:
+        console.print(f"LingBot bundle export failed: {exc}", markup=False)
+        raise typer.Exit(code=1) from exc
+    if not result["training_ready"]:
+        raise typer.Exit(code=2)
+
+
 if __name__ == "__main__":
     app()

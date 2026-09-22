@@ -4,6 +4,22 @@ from pydantic import Field, model_validator
 from .policy import StrictModel
 
 
+class LanguageCheck(StrictModel):
+    enabled: bool = True
+    allow_instruction_changes: bool = False
+    min_length: int | None = Field(2, ge=0)
+    max_length: int | None = Field(4096, ge=1)
+    check_control_characters: bool = True
+    check_numeric: bool = True
+    placeholders: list[str] = Field(default_factory=lambda: ["n/a", "unknown", "task"])
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.min_length is not None and self.max_length is not None and self.min_length > self.max_length:
+            raise ValueError("Invalid task text length range")
+        return self
+
+
 class BoundsCheck(StrictModel):
     low: float | list[float]
     high: float | list[float]
@@ -47,16 +63,25 @@ class GripperCheck(StrictModel):
         return self
 
 
-class VideoCheck(StrictModel):
+class VisualCheck(StrictModel):
     enabled: bool = True  # Metadata references are checked without decoding by default.
     decode: bool = False
     sample_stride: int = Field(30, ge=1)
     batch_frames: int = Field(32, ge=1, le=256)
     blur_variance: float | None = Field(None, ge=0)
     max_blur_ratio: float = Field(.5, ge=0, le=1)
+    black_level: float | None = Field(None, ge=0, le=255)
+    max_black_ratio: float = Field(.5, ge=0, le=1)
+    min_brightness: float | None = Field(None, ge=0, le=255)
+    max_brightness: float | None = Field(None, ge=0, le=255)
 
     @model_validator(mode="after")
     def needs_pixels(self):
-        if self.blur_variance is not None and not self.decode:
-            raise ValueError("Blur checking requires quality.video.decode=true")
+        if any(v is not None for v in (self.blur_variance, self.black_level, self.min_brightness, self.max_brightness)) and not self.decode:
+            raise ValueError("Visual pixel checking requires quality.visual.decode=true")
+        if self.min_brightness is not None and self.max_brightness is not None and self.min_brightness > self.max_brightness:
+            raise ValueError("Invalid brightness range")
         return self
+
+
+VideoCheck = VisualCheck  # Legacy import alias.
