@@ -29,3 +29,20 @@ Thumbs.db
 
 # Wandb (if accidentally created)
 wandb/
+
+# Local datasets, generated reports and model artifacts (do not publish raw data)
+outputs/
+assets/norm_stats/
+.verification-deps/
+
+# Local development records
+/.zcode/
+/AGENTS.md
+/audit_dirstat.txt
+/audit_name_status.txt
+/git push -u origin HEAD
+/into checks*
+
+# Personal process notes
+/docs/PROJECT_REVIEW_2026-09-06_ZH.md
+/docs/DROID100_SERVER_PLAN_2026-09-12_ZH.md

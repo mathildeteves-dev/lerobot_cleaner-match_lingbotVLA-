@@ -1,0 +1,66 @@
+reader_backend: lerobot
+# Resolve feature semantics through LingBotAdapter; relative to this YAML.
+robot_config: ../robot_configs/droid_franka.yaml
+# Conservative v3 cleaning: preserve every episode/frame and all original videos.
+nonfinite: error
+bounds: {}
+verify_videos: false  # true requires PyAV with an AV1 decoder
+engine: streaming
+# This total-size guard is NOT the in-memory batch size.
+max_frames: 30000000
+batch_rows: 8192
+metadata_batch_rows: 64
+max_episode_frames: 100000
+quantile_samples: 32768
+disk_reserve_gb: 5
+progress: true
+# The supplied dataset stores these values twice. Keep both copies synchronized.
+aliases:
+  - {source: observation.state, target: observation.state.joint_position, start: 0, end: 7}
+  - {source: observation.state, target: observation.state.gripper_position, start: 7, end: 8}
+  - {source: action, target: action.joint_position, start: 0, end: 7}
+  - {source: action, target: action.gripper_position, start: 7, end: 8}
+
+# Separate arm/gripper signals; null absolute thresholds measure only.
+# Z-score and static epsilon are tunable heuristics, not verified physical limits.
+quality:
+  enabled: true
+  # Joint stillness: both full state and action transitions must be below epsilon.
+  # Native-unit heuristic tolerances; tune each independently for the dataset.
+  joint_static_ratio:
+    state_epsilon: 0.0001
+    action_epsilon: 0.0001
+    threshold: 0.95
+  groups:
+    - name: state_arm
+      feature: observation.state.arm.position
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: action_arm
+      feature: action.arm.position
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: state_gripper
+      feature: observation.state.effector.position
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001
+    - name: action_gripper
+      feature: action.effector.position
+      velocity: null
+      acceleration: null
+      jerk: null
+      velocity_zscore: 3.0
+      acceleration_zscore: 3.0
+      static_epsilon: 0.0001

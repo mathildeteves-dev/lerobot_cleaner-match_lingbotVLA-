@@ -1,0 +1,1 @@
+"""Version-independent quality checks."""

@@ -1,0 +1,29 @@
+# Verified against the supplied DROID v3.0 feature arrays, not the R1Pro template.
+# [0:7] = joint positions; [7:8] = continuous gripper position.
+# Keep absolute positions. If switching to deltas, update deployment and recompute norm.
+states:
+  - observation.state.arm.position:
+      origin_keys:
+        - observation.state: {start: 0, end: 7}
+  - observation.state.effector.position:
+      origin_keys:
+        - observation.state: {start: 7, end: 8}
+actions:
+  - action.arm.position:
+      origin_keys:
+        - action: {start: 0, end: 7}
+      # Current DROID: absolute qpose; LingBot real-world recipe recommends relative qpose.
+      # Deployment semantics have not yet been converted/verified.
+      # Keep absolute positions. If switching to deltas, update deployment and recompute norm.
+      subtract_state: false
+  - action.effector.position:
+      origin_keys:
+        - action: {start: 7, end: 8}
+      subtract_state: false
+images:
+  - observation.images.camera_exterior_1:
+      origin_keys: observation.images.exterior_1_left
+  - observation.images.camera_exterior_2:
+      origin_keys: observation.images.exterior_2_left
+  - observation.images.camera_wrist_left:
+      origin_keys: observation.images.wrist_left

@@ -140,3 +140,90 @@ def synth_dataset(tmp_path) -> Path:
     (meta / "stats.json").write_text(json.dumps(stats))
 
     return root
+
+
+@pytest.fixture
+def v3_data(tmp_path):
+    """Synthetic LeRobot v3.0 dataset with undecodable placeholder videos."""
+    root = tmp_path / "source"
+    (root / "meta/episodes/chunk-000").mkdir(parents=True)
+    (root / "data/chunk-000").mkdir(parents=True)
+    features = {
+        "observation.state": {"dtype": "float32", "shape": [8]},
+        "action": {"dtype": "float32", "shape": [8]},
+        "action.joint_position": {"dtype": "float32", "shape": [7]},
+        "action.gripper_position": {"dtype": "float32", "shape": [1]},
+        "timestamp": {"dtype": "float32", "shape": [1]},
+        **{
+            k: {"dtype": "int64", "shape": [1]}
+            for k in ["index", "frame_index", "episode_index", "task_index"]
+        },
+        "is_episode_successful": {"dtype": "bool", "shape": [1]},
+        "language_instruction": {"dtype": "string", "shape": [1]},
+    }
+    cameras = ["exterior_1_left", "exterior_2_left", "wrist_left"]
+    for camera in cameras:
+        features[f"observation.images.{camera}"] = {"dtype": "video", "shape": [180, 320, 3]}
+    info = {
+        "codebase_version": "v3.0",
+        "total_frames": 6,
+        "total_episodes": 2,
+        "total_tasks": 1,
+        "fps": 15,
+        "robot_type": "Franka",
+        "features": features,
+        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+        "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+    }
+    (root / "meta/info.json").write_text(json.dumps(info), encoding="utf-8")
+    (root / "meta/stats.json").write_text(
+        json.dumps({"observation.images.wrist_left": {"mean": [[[0.5]], [[0.5]], [[0.5]]]}}),
+        encoding="utf-8",
+    )
+    pd.DataFrame({"task_index": [0]}, index=["pick up object"]).to_parquet(
+        root / "meta/tasks.parquet"
+    )
+    actions = np.arange(48, dtype=np.float32).reshape(6, 8) / 100
+    table = pd.DataFrame(
+        {
+            "action": list(actions),
+            "observation.state": list(actions / 2),
+            "action.joint_position": list(actions[:, :7]),
+            "action.gripper_position": actions[:, 7],
+            "timestamp": np.tile(np.arange(3, dtype=np.float32) / 15, 2),
+            "index": np.arange(6),
+            "frame_index": np.tile(np.arange(3), 2),
+            "episode_index": np.repeat([0, 1], 3),
+            "task_index": np.zeros(6, dtype=np.int64),
+            "is_episode_successful": [True] * 3 + [False] * 3,
+            "language_instruction": ["pick up object"] * 6,
+            "extra_unlisted_column": ["preserve me"] * 6,
+        }
+    )
+    table.to_parquet(root / "data/chunk-000/file-000.parquet", index=False)
+    episodes = pd.DataFrame(
+        {
+            "episode_index": [0, 1],
+            "length": [3, 3],
+            "dataset_from_index": [0, 3],
+            "dataset_to_index": [3, 6],
+            "data/chunk_index": [0, 0],
+            "data/file_index": [0, 0],
+            "stats/observation.images.wrist_left/mean": [np.array([0.5]), np.array([0.6])],
+        }
+    )
+    for camera in cameras:
+        key = f"observation.images.{camera}"
+        folder = root / "videos" / key / "chunk-000"
+        folder.mkdir(parents=True)
+        # Intentionally NOT decodable: these tests exercise metadata-only mode.
+        (folder / "file-000.mp4").write_bytes(b"fake-video-bytes")
+        for suffix, values in {
+            "chunk_index": [0, 0],
+            "file_index": [0, 0],
+            "from_timestamp": [0.0, 0.2],
+            "to_timestamp": [0.2, 0.4],
+        }.items():
+            episodes[f"videos/{key}/{suffix}"] = values
+    episodes.to_parquet(root / "meta/episodes/chunk-000/file-000.parquet", index=False)
+    return root

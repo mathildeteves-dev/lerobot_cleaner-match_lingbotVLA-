@@ -1,0 +1,17 @@
+# v2.1 -> official conversion on a copy -> official LeRobotDataset -> GR00T semantics.
+reader_backend: lerobot
+semantic_adapter: groot
+# Relative to this YAML. Choose a separate new directory for each source dataset.
+converted_root: ../../converted/groot_v3
+engine: streaming
+data_file_policy: strict
+nonfinite: error
+bounds: {}
+verify_videos: false
+max_frames: 30000000
+max_episode_frames: 100000
+batch_rows: 8192
+progress: true
+# meta/modality.json is preserved by conversion; no external map needed.
+quality:
+  enabled: true

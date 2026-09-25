@@ -1,0 +1,81 @@
+# Unified checks -> QualityReport + TransformPlan -> transforms -> official v3 writer.
+# Adapt source columns, camera names and physical thresholds to the actual robot.
+reader_backend: lerobot
+semantic_adapter: auto
+engine: streaming
+max_frames: 30000000
+max_episode_frames: 100000
+nonfinite: error
+verify_videos: false
+
+quality:
+  enabled: true
+  timestamp:
+    enabled: true
+    tolerance_ratio: 0.2
+    require_uniform: true
+    require_zero_start: true
+  episode_structure: true
+  episode_length:
+    enabled: true
+    min_frames: 2
+  video:
+    enabled: true
+    decode: false
+    sample_stride: 30
+    batch_frames: 32
+    # To check pixel detail: set decode: true, then configure blur_variance.
+    blur_variance: null
+    max_blur_ratio: 0.5
+  # Without groups, evaluate the full canonical state vector.
+  source: state
+  velocity: null
+  acceleration: null
+  jerk: null
+  zscore: 3.0
+  velocity_zscore: 3.0
+  acceleration_zscore: 3.0
+  static_epsilon: 0.0001
+  static_ratio: null
+  joint_limits: null
+  percentile_bounds: null
+  # Example after verifying units/dimensions:
+  # joint_limits: {low: [-1.0, -1.0], high: [1.0, 1.0]}
+  # gripper: {source: action, columns: [7], mode: binary_01}
+
+policy:
+  default: {on_fail: warn, on_unevaluated: warn}
+  rules:
+    timestamp: {on_fail: warn, on_unevaluated: abort}
+    episode_structure: {on_fail: abort, on_unevaluated: abort}
+    episode_length: {on_fail: reject_episode, on_unevaluated: warn}
+    # With groups, use e.g. groups/arm/jerk for a group-specific override.
+  output_on_fail: report
+
+transforms:
+  static_trim:
+    enabled: false
+    source: action
+    mode: trim_edges
+    epsilon: 0.002
+    min_kept_frames: 2
+  frame_filter:
+    nonfinite: false
+    drop_frames: {}  # Example: {42: [122, 123]}, original episode-relative positions
+  reject_episodes: []
+  numeric: []
+  # numeric:
+  #   - {target: observation.state, operation: interpolate}
+  #   - {target: observation.state, operation: clip, low: -1.0, high: 1.0}
+  #   - {target: action.effector.position, operation: gripper, threshold: 0.5, mode: binary_01}
+  #   - {target: observation.state, operation: percentile_clip, quantiles: [0.01, 0.99]}
+  # percentile_clip accepts reference low/high, or fits one source-wide reservoir first.
+  crop: {}
+  # crop:
+  #   observation.images.front:
+  #     purpose: dataset     # preprocessing only writes a training recipe, not pixels
+  #     box: [40, 20, 600, 440]  # left, top, right, bottom in original pixels
+  #     resize: [224, 224]
+  retime: false
+  min_kept_frames: 1
+  on_too_short: reject_episode

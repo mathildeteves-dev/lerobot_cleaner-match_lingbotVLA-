@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lerobot_cleaner"
 version = "0.1.0"
-description = "A configurable, modular cleaning tool for GR00T-format LeRobot datasets"
+description = "LeRobot dataset quality and cleaning with generic, GR00T and LingBot feature mappings"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -32,7 +32,15 @@ dependencies = [
 [project.optional-dependencies]
 viz = ["matplotlib>=3.7"]
 video = ["opencv-python>=4.8"]
+v3-video = ["av>=14", "Pillow>=9"]
 dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.4"]
+lerobot = [
+    "lerobot @ https://github.com/huggingface/lerobot/archive/refs/tags/v0.4.2.tar.gz"
+]
+# Compatibility alias; the official loader is also usable without LingBot mappings.
+lingbot = [
+    "lerobot @ https://github.com/huggingface/lerobot/archive/refs/tags/v0.4.2.tar.gz"
+]
 all = [
     "matplotlib>=3.7",
     "opencv-python>=4.8",
@@ -45,8 +53,8 @@ lerobot_cleaner = "lerobot_cleaner.cli:app"
 lerobot-cleaner = "lerobot_cleaner.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/cyd/lerobot_cleaner"
-Repository = "https://github.com/cyd/lerobot_cleaner"
+Homepage = "https://github.com/mathildeteves-dev/lerobot_cleaner-match_lingbotVLA-"
+Repository = "https://github.com/mathildeteves-dev/lerobot_cleaner-match_lingbotVLA-"
 
 [tool.setuptools.packages.find]
 where = ["."]

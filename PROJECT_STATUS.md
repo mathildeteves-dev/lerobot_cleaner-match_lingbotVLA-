@@ -1,5 +1,83 @@
 # 项目状态文档 (PROJECT_STATUS.md)
 
+## 未引用重复索引分片处理
+
+新增显式 `metadata_referenced` 数据文件策略，默认仍为 strict。
+只选择逐集元数据引用的文件，要求所选文件完整覆盖声明帧数，继续逐帧验证索引/演示/视频关系；
+排除清单写入报告，不删除原文件。最终输出在 strict 策略下复核。
+见 [重复分片处理步骤](docs/STALE_SHARDS_ZH.md)。最新测试：79 通过、6 因缺少 ffmpeg 跳过；Ruff 通过。
+
+## 完整 DROID 分批支持
+
+新增 PyArrow 分批读取、跨文件演示处理、增量全局统计、阶段级续跑、输出空间预检和进度显示。
+DROID 默认配置启用 streaming，不再全量拼接数据；旧 memory 引擎保留用于小样例兼容。
+本地 100 集真实数据已跑通分批清洗并核对内容；新增超过 100 万帧的合成读取测试。
+全局分位数采用有界均匀抽样，逐集分位数精确计算；中断的数值阶段从头扫描，视频阶段可复用已验证副本。
+详见 [服务器分批清洗步骤](docs/STREAMING_SERVER_ZH.md)。未直接运行服务器完整数据或 LingBot 训练。
+最新回归：72 项通过、6 项因缺少 ffmpeg 跳过；Ruff 检查通过。
+
+## 本分支补充（2026-09-04）
+
+本次新增 DROID / Franka 的原生 v3 保守清洗和 LingBot 映射。真实样例：100 集、
+32,212 帧、15 Hz、47 个任务、3 路共享 AV1 视频；19 集标记失败，默认仍保留。
+全部数值字段无 NaN/Inf，本次输出未改变数值、未删帧；重算数值统计并校验视频复制哈希。
+本次测试：48 通过、6 因缺少 ffmpeg 跳过；Ruff 检查通过。
+详见 [DROID 使用说明](docs/DROID_GUIDE_ZH.md)。
+
+当前验证边界：v3 数据结构/数值/映射静态检查及本地保守清洗已运行；
+视频完整解码、官方 LeRobot 实际加载、LingBot 归一化/训练/真机控制尚未验证。
+现有 R1Pro YAML 仅保留为未验证模板，不能用于当前 DROID 数据。
+以下原有状态是上游 v2.1 项目的历史记录，不代表本分支已完成 LingBot 端到端训练。
+
+## 当前代码结构（2026-09-18，按格式版本拆分）
+
+```
+lerobot_cleaner/                        # 项目根
+├── configs/                            # 见 configs/README.md：cleaning / profiles / embodiments 手写源；
+│   │                                   # robot_configs / vla 为 generate-lingbot-config 生成产物
+├── scripts/                            # 各数据集的启动入口（按数据集命名，不进主包）
+│   ├── run_droid_clean.py              # DROID v3 审计/清洗入口
+│   ├── run_libero_clean.py             # LIBERO v3 审查清洗入口
+│   ├── run_lingbot_norm.py             # 在 LingBot 源码目录启动 compute_norm
+│   ├── run_lingbot_probe.py            # 用真实 LingBot VLADataset 抽样验证映射
+│   ├── run_compute_norm_r1pro.sh       # R1Pro 归一化（未验证模板配套）
+│   └── package_streaming_update.py     # 打服务器增量更新包
+│
+├── lerobot_cleaner/                    # 主包（按数据格式版本分组，cli.py 是唯一调度层）
+│   ├── cli.py                          # typer CLI：v2.1（run/check/…）与 v3（audit-v3/clean-v3/
+│   │                                   # export-lingbot/validate-lingbot/generate-lingbot-config）路由
+│   ├── v21/                            # 旧 GR00T v2.1 清洗引擎（R1–R8），自包含，未被 v3 路径复用
+│   │   ├── config.py / wizard.py / pipeline.py / parallel.py / types.py / report.py
+│   │   ├── video_utils.py              # ffmpeg/ffprobe 封装（v2.1 视频规则用）
+│   │   ├── reader.py / writer.py / stats.py / validate.py / inspector.py
+│   │   └── rules/                      # checks / transforms / finalizers（R1–R8）
+│   └── v30/                            # 新 LeRobot v3.0 + LingBot-VLA 路径
+│       ├── v3.py                       # v3.0 元数据/数值/共享视频审计与保守清洗
+│       ├── v3_streaming.py             # PyArrow 分批引擎（大数据集），可选 review 观察者
+│       ├── v3_stream_stats.py          # 增量统计 + 固定容量分位数抽样
+│       ├── episode_review.py           # 共享审查观察者 DatasetReview + task_texts（tasks.parquet 解析）
+│       ├── video_review.py             # 共享视频抽样诊断（由 v3_streaming.verify_videos 调用）
+│       ├── review_profile.py           # 数据集契约与质量阈值 profile 加载
+│       ├── review_report.py            # 可移植自动审查报告束
+│       ├── libero.py                   # LIBERO 专属入口 validate_libero（profile 驱动）
+│       ├── training_readiness.py       # 训练就绪阻塞项检查（语义核实、LingBot 源码、依赖）
+│       └── lingbot/                    # LingBot-VLA 集成子包
+│           ├── vla.py                  # v2.1→v3.0 导出
+│           ├── config.py               # robot/train 映射静态校验 validate_mapping
+│           └── generate.py             # 从 embodiment spec 生成 robot+train 配置对
+│
+├── docs/                               # 按数据集/主题拆分的使用说明（DROID/LIBERO/分批/重复分片）
+├── presets/                            # v2.1 时代 GR00T 清洗预设（R1Pro），与 v3 无关
+└── tests/                              # 按版本拆分：v21/（test_config/rules/stats/validate/e2e）
+                                        # 与 v30/（test_v3* / test_libero* / test_lingbot_* / test_review_*）
+```
+
+依赖方向约定：`v21/` 与 `v30/` 互不引用，仅 `cli.py` 同时路由两者。
+`v30/` 内的 review 组件（`episode_review` / `video_review` /
+`review_profile` / `review_report`）是 DROID 与 LIBERO 共用的 v3 审查层，
+不依赖任何数据集专属模块；数据集专属逻辑只允许出现在 `libero.py`、
+`scripts/run_*` 与 configs 中。`v30/lingbot/` 子包独立于清洗引擎，仅被 CLI 懒加载。
+
 > lerobot_cleaner —— 面向 NVIDIA Isaac GR00T 后训练场景的通用 LeRobot 数据集清洗工具
 >
 > 本文档给"未来的自己 / 接手的协作者 / 想使用本工具的人"看。读完即可了解：项目做到什么程度、怎么用、每个文件的作用、后续可优化方向。
@@ -136,7 +214,7 @@ parquet 必需列：`observation.state`、`action`、`timestamp`、`frame_index`
 
 ## 3. 清洗规则库（R1–R8）
 
-每条规则在 yaml 里独立配 `enabled` 与参数。执行顺序：先廉价丢弃坏 episode，再做数值变换，长度过滤放后面，R8 永远最后。
+每条规则在 yaml 里独立配 `enabled` 与参数。调用层显式分为 Checks（时间戳→输入长度→视频完整性→轨迹数值检测）、Transforms（数值修复→分位数裁剪→静止裁剪→夹爪二值化→ROI）、Finalizers（R8）。Checks 拒绝后不进入 Transforms；长度检查针对变换前的数据，不在裁剪后重复检查。Checks 仅记录问题或拒绝 episode，不修改数值或删帧。旧 numeric_sanity 配置展开为 trajectory 检测和 numeric 变换；NumericSanityRule 保留为兼容层。速度、加速度、jerk 默认关闭，启用须显式设置 limits，阈值单位为目标原始单位/秒的对应阶次。R8 在所有 episode 完成后统一运行，dry-run 跳过写出收尾。
 
 | ID | 规则 (yaml key) | 作用 | 关键参数 |
 |----|-----------------|------|---------|
@@ -157,7 +235,7 @@ parquet 必需列：`observation.state`、`action`、`timestamp`、`frame_index`
 
 ---
 
-## 4. 文件位置及其作用
+## 4. 文件位置及其作用（v1.0 历史记录，当前结构见上文）
 
 ```
 lerobot_cleaner/                        # 项目根
@@ -193,9 +271,15 @@ lerobot_cleaner/                        # 项目根
 │   │   └── stats.py                    # 流式全局 stats + 逐集 stats(compute_episode_stats)
 │   └── rules/
 │       ├── base.py                     # Rule 抽象基类
-│       ├── __init__.py                 # 规则注册表 + 按序 build_rules()
-│       ├── r1_timestamp.py … r7_video_integrity.py   # R1–R7 各规则
-│       └── (R8 由 writer/pipeline 实现，非逐 episode 规则)
+│       ├── __init__.py                 # 分阶段构建 + run_episode_stages()
+│       ├── checks/integrity/           # timestamp.py (R1), episode_length.py (R5), numeric.py（R6 兼容层）
+│       ├── checks/trajectory/          # finite / joint_limits / velocity / acceleration / jerk / outlier
+│       ├── transforms/numeric/         # repair.py / percentile_clip.py
+│       ├── checks/vision/              # video_integrity.py (R7)
+│       ├── transforms/motion/          # static_trim.py (R2)
+│       ├── transforms/embodiment/      # gripper.py (R3)
+│       ├── transforms/vision/          # roi_crop.py (R4)
+│       └── finalizers/                 # reindex_and_restats.py (R8)，调用 writer 完成写出
 │
 └── tests/                              # 20 个测试全过
     ├── conftest.py                     # 合成数据集 fixture（含 ffmpeg 生成的测试视频）

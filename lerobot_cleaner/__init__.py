@@ -1,6 +1,6 @@
 """lerobot-cleaner: a configurable cleaning tool for GR00T-format LeRobot datasets."""
 
-from lerobot_cleaner.config import CleaningConfig
+from lerobot_cleaner.v21.config import CleaningConfig
 
 __version__ = "0.1.0"
 
@@ -15,11 +15,11 @@ def clean(input_path, output_path, config=None, **kwargs):
             defaults. Extra kwargs override top-level config fields.
 
     Returns:
-        The :class:`~lerobot_cleaner.report.CleaningReport` produced by the run.
+        The :class:`~lerobot_cleaner.v21.report.CleaningReport` produced by the run.
     """
     from pathlib import Path
 
-    from lerobot_cleaner.pipeline import Pipeline
+    from lerobot_cleaner.v21.pipeline import Pipeline
 
     if config is None:
         cfg = CleaningConfig()
